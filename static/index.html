@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="围绕真实项目持续深挖的 LLM 实习模拟面试">
+    <title>Interview Helper</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;400;500;600&display=swap"
+      rel="stylesheet"
+    >
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar" aria-label="主导航">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">IH</span>
+          <div>
+            <p class="brand-name">Interview Helper</p>
+            <p class="brand-caption">项目深挖模拟面试</p>
+          </div>
+        </div>
+
+        <nav class="tabs" role="tablist" aria-orientation="vertical">
+          <button
+            class="tab-btn active"
+            id="tab-interview"
+            type="button"
+            role="tab"
+            aria-selected="true"
+            aria-controls="panel-interview"
+            data-panel="interview"
+          >
+            模拟面试
+          </button>
+          <button
+            class="tab-btn"
+            id="tab-reviews"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="panel-reviews"
+            data-panel="reviews"
+            tabindex="-1"
+          >
+            面试复盘
+          </button>
+          <button
+            class="tab-btn"
+            id="tab-jds"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="panel-jds"
+            data-panel="jds"
+            tabindex="-1"
+          >
+            JD 库
+          </button>
+        </nav>
+
+        <p class="sidebar-note">只问你的项目，以及它对岗位是否真正有价值。</p>
+      </aside>
+
+      <main class="main-content">
+        <section
+          class="panel"
+          id="panel-interview"
+          role="tabpanel"
+          aria-labelledby="tab-interview"
+          tabindex="0"
+        >
+          <p class="eyebrow">模拟面试</p>
+          <h1>把简历上的项目，<br>变成你真正拥有的项目。</h1>
+          <p class="lead">
+            不测八股，不测刷题。面试官会沿着预先确定的方向逐步追问，
+            必要时核对代码，直到确认你是否真正理解自己的项目。
+          </p>
+          <div class="divider-section">
+            <p class="section-label">即将支持</p>
+            <p class="section-copy">提交 GitHub、项目陈述与岗位类别，开始一场项目深挖面试。</p>
+          </div>
+        </section>
+
+        <section
+          class="panel"
+          id="panel-reviews"
+          role="tabpanel"
+          aria-labelledby="tab-reviews"
+          tabindex="0"
+          hidden
+        >
+          <p class="eyebrow">面试复盘</p>
+          <h1>每一次回答，都原样留下。</h1>
+          <p class="lead">结束后将在这里查看完整对话、逐轮思考与综合报告。</p>
+          <div class="empty-state" role="status">
+            <span class="empty-symbol" aria-hidden="true">○</span>
+            <p>还没有面试记录</p>
+          </div>
+        </section>
+
+        <section
+          class="panel"
+          id="panel-jds"
+          role="tabpanel"
+          aria-labelledby="tab-jds"
+          tabindex="0"
+          hidden
+        >
+          <p class="eyebrow">JD 库</p>
+          <h1>岗位本质，来自真实招聘与真实面试。</h1>
+          <p class="lead">这里只展示有可核对来源的 JD 与面经，不生成、不编造。</p>
+          <div class="empty-state" role="status">
+            <span class="empty-symbol" aria-hidden="true">○</span>
+            <p>真实样本正在整理</p>
+          </div>
+        </section>
+      </main>
+    </div>
+  </body>
+</html>
