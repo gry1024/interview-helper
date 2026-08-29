@@ -40,6 +40,14 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="Interview Helper", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def disable_static_cache(request: Request, call_next):
+    response = await call_next(request)
+    if request.url.path in {"/", "/index.html", "/app.js", "/styles.css"}:
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 @app.get("/api/health")
 def health() -> dict[str, str]:
     """Return a small readiness response for local and public checks."""
