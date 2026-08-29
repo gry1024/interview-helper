@@ -1,0 +1,32 @@
+[
+  {
+    "id": "bytedance-llm-algorithm-intern-interview",
+    "kind": "interview",
+    "company": "字节跳动",
+    "role": "大模型算法实习生",
+    "source_url": "https://www.nowcoder.com/feed/main/detail/41e59b1a6f734d63ab81d91e289f8949",
+    "source_name": "牛客面经",
+    "text": "项目拷打后，追问 Transformer 替代 RNN 的核心优势及 Self-Attention 在多模态对齐中的瓶颈；继续追问 LoRA 可插入层、QLoRA 的 NF4 选择、multi-query attention 后 decoder 延迟瓶颈、Embedding 与 Rerank 流程、RAG 从数据清洗到上线的完整链路及 chunk 策略、SFT 数据集构造，以及 LoRA rank 的选择依据。",
+    "captured_at": "2026-08-30"
+  },
+  {
+    "id": "tencent-llm-algorithm-second-interview",
+    "kind": "interview",
+    "company": "腾讯",
+    "role": "LLM 大模型算法实习生（二面）",
+    "source_url": "https://www.nowcoder.com/feed/main/detail/8d751ffe6b9244d18e4d0f637ce070ce",
+    "source_name": "牛客面经",
+    "text": "追问 GRPO 与 PPO 在 RLHF 中的核心区别及选型理由、KL 散度的作用、vLLM 如何用 PagedAttention 提升显存利用率、Qwen3 与 DeepSeek-R1 的架构差异；项目部分追问微调数据结构、数量、清洗与有效性验证，奖励函数如何避免模型堆字数刷奖励，以及部署时上下文长度、显存、量化和动态批处理之间的取舍。",
+    "captured_at": "2026-08-30"
+  },
+  {
+    "id": "ctrip-large-model-intern-interview",
+    "kind": "interview",
+    "company": "携程",
+    "role": "大模型算法实习生",
+    "source_url": "https://www.nowcoder.com/feed/main/detail/a137082d96d445fdbeea614d8bd9d3e1",
+    "source_name": "牛客面经",
+    "text": "面试问题包括 LoRA 微调原理、P-Tuning、PPO 与 GRPO、Prompt 微调、Attention 结构、GPT 与 LLaMA 架构、DeepSeek-R1 训练阶段、Encoder-only 与 Decoder-only 的区别，以及 MoE 技术细节和未来发展困境。",
+    "captured_at": "2026-08-30"
+  }
+]

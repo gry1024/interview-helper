@@ -1,0 +1,32 @@
+[
+  {
+    "id": "bytedance-data-model-intern-2026",
+    "kind": "jd",
+    "company": "ByteDance",
+    "role": "Large Model Algorithm Engineer Intern (Data Model)",
+    "source_url": "https://jobs.bytedance.com/en/position/7530952054316910866/detail",
+    "source_name": "ByteDance Careers",
+    "text": "Responsibilities include optimizing data-centric algorithms and reasoning-data synthesis pipelines, improving training-data consistency, adaptability and diversity, addressing over/under-thinking in chain-of-thought generation, and iterating post-training effects through evaluation systems. Minimum qualifications include Python and PyTorch proficiency and familiarity with large-model research, especially reinforcement learning.",
+    "captured_at": "2026-08-30"
+  },
+  {
+    "id": "xiaohongshu-llm-post-training-intern-2026",
+    "kind": "jd",
+    "company": "小红书",
+    "role": "基础模型算法实习生 - LLM Post-training",
+    "source_url": "https://www.shixiseng.com/intern/inn_fvrv3d31yjny",
+    "source_name": "实习僧",
+    "text": "岗位侧重提升大语言模型核心能力：研发和优化 SFT、GRPO 等对齐与强化学习算法，构建 Reward Model；探索长链推理、自反思与自进化；研发 Search Agent、Code Agent 和 Tool-use Agent 的强化学习方案；探索高质量合成数据生成与过滤。要求深入理解 Transformer 与大模型训练全流程，熟练使用 PyTorch，有 DeepSpeed、Megatron-LM 或 Ray 等分布式训练经验。",
+    "captured_at": "2026-08-30"
+  },
+  {
+    "id": "pdd-large-model-algorithm-intern-2027",
+    "kind": "jd",
+    "company": "拼多多集团",
+    "role": "大模型算法实习生（2027届暑期实习）",
+    "source_url": "https://www.nowcoder.com/jobs/detail/444765",
+    "source_name": "牛客职位",
+    "text": "参与多语言、多模态、AIGC 等基座大模型训练和优化，深入数据处理、Pre-training、Post-training 等关键环节，并将模型能力用于电商业务。要求具备 Transformer 等大模型算法基础、数据敏感度和编程能力；熟悉 Pre-training、SFT、RL 等训练流程或生成式模型者优先。",
+    "captured_at": "2026-08-30"
+  }
+]
