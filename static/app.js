@@ -167,13 +167,13 @@ async function submitSession(event) {
     return;
   }
 
-  setSessionLoading(true);
   const formData = new FormData(sessionForm);
   const payload = {
     github_url: formData.get("github_url"),
     statement: formData.get("statement"),
     role: formData.get("role"),
   };
+  setSessionLoading(true);
 
   try {
     const response = await fetch("/api/sessions", {
