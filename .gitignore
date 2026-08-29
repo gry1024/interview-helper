@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+AGENT.md
+VibeCoding-Scaffold/重要信息.txt
+data/
+*.db
+__pycache__/
+.venv/
+venv/
+repos/
+*.pyc
+.DS_Store
