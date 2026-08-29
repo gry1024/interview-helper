@@ -1,6 +1,13 @@
 const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
 const panels = Array.from(document.querySelectorAll('[role="tabpanel"]'));
 const sampleLibrary = document.querySelector("#sample-library");
+const sessionForm = document.querySelector("#session-form");
+const sessionStatus = document.querySelector("#session-status");
+const interviewStart = document.querySelector("#interview-start");
+const interviewLive = document.querySelector("#interview-live");
+const directionList = document.querySelector("#direction-list");
+const firstQuestion = document.querySelector("#first-question");
+const cloneNotice = document.querySelector("#clone-notice");
 let libraryLoaded = false;
 let libraryLoading = false;
 
@@ -97,6 +104,112 @@ async function loadSampleLibrary() {
   }
 }
 
+function setSessionLoading(isLoading) {
+  if (!sessionForm) {
+    return;
+  }
+
+  sessionForm
+    .querySelectorAll("input, textarea, select, button")
+    .forEach((control) => {
+      control.disabled = isLoading;
+    });
+
+  if (isLoading) {
+    const loading = document.createElement("div");
+    loading.className = "loading-state";
+    loading.setAttribute("role", "status");
+    const spinner = document.createElement("span");
+    spinner.className = "spinner";
+    spinner.setAttribute("aria-hidden", "true");
+    loading.append(spinner, document.createTextNode("正在确定方向并准备代码仓库"));
+    sessionStatus.replaceChildren(loading);
+  }
+}
+
+function apiErrorMessage(data, fallback) {
+  if (typeof data?.detail === "string") {
+    return data.detail;
+  }
+  if (Array.isArray(data?.detail) && typeof data.detail[0]?.msg === "string") {
+    return data.detail[0].msg.replace(/^Value error,\s*/, "");
+  }
+  return fallback;
+}
+
+function renderStartedSession(session) {
+  directionList.replaceChildren(
+    ...session.directions.map((direction) => {
+      const item = document.createElement("li");
+      item.className = "direction-item";
+      item.append(
+        createTextElement("p", "direction-title", direction.title),
+        createTextElement("p", "direction-goal", direction.goal),
+      );
+      return item;
+    }),
+  );
+  firstQuestion.textContent = session.first_question;
+  cloneNotice.hidden = session.clone_ok;
+  cloneNotice.textContent = session.clone_ok
+    ? ""
+    : session.clone_error || "代码仓库暂不可用，面试仍可继续。";
+  interviewLive.dataset.sessionId = session.id;
+  interviewStart.hidden = true;
+  interviewLive.hidden = false;
+  interviewLive.focus({ preventScroll: true });
+  interviewLive.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function submitSession(event) {
+  event.preventDefault();
+  if (!sessionForm.reportValidity()) {
+    return;
+  }
+
+  setSessionLoading(true);
+  const formData = new FormData(sessionForm);
+  const payload = {
+    github_url: formData.get("github_url"),
+    statement: formData.get("statement"),
+    role: formData.get("role"),
+  };
+
+  try {
+    const response = await fetch("/api/sessions", {
+      method: "POST",
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(apiErrorMessage(data, "面试启动失败，请稍后重试。"));
+    }
+    if (
+      !Array.isArray(data.directions) ||
+      data.directions.length < 3 ||
+      !data.first_question
+    ) {
+      throw new Error("面试方向返回格式无效，请稍后重试。");
+    }
+
+    renderStartedSession(data);
+  } catch (error) {
+    console.error("Failed to start interview session", error);
+    sessionStatus.replaceChildren(
+      createTextElement(
+        "p",
+        "flash error",
+        error instanceof Error ? error.message : "面试启动失败，请稍后重试。",
+      ),
+    );
+    setSessionLoading(false);
+  }
+}
+
 function activateTab(nextTab) {
   const panelName = nextTab.dataset.panel;
 
@@ -131,3 +244,5 @@ tabs.forEach((tab, index) => {
     tabs[nextIndex].focus();
   });
 });
+
+sessionForm?.addEventListener("submit", submitSession);

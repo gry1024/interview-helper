@@ -80,9 +80,64 @@
             不测八股，不测刷题。面试官会沿着预先确定的方向逐步追问，
             必要时核对代码，直到确认你是否真正理解自己的项目。
           </p>
-          <div class="divider-section">
-            <p class="section-label">即将支持</p>
-            <p class="section-copy">提交 GitHub、项目陈述与岗位类别，开始一场项目深挖面试。</p>
+
+          <div class="interview-start" id="interview-start">
+            <form class="session-form" id="session-form" novalidate>
+              <label class="field">
+                <span>GitHub 仓库</span>
+                <input
+                  class="input"
+                  id="github-url"
+                  name="github_url"
+                  type="url"
+                  inputmode="url"
+                  autocomplete="url"
+                  maxlength="512"
+                  placeholder="https://github.com/owner/repository"
+                  required
+                >
+              </label>
+
+              <label class="field">
+                <span>项目陈述</span>
+                <textarea
+                  class="input"
+                  id="statement"
+                  name="statement"
+                  rows="8"
+                  maxlength="8000"
+                  placeholder="粘贴简历中对这个项目的原始描述"
+                  required
+                ></textarea>
+              </label>
+
+              <label class="field">
+                <span>目标岗位</span>
+                <select class="input" id="role" name="role" required>
+                  <option value="llm-algo">LLM 算法实习</option>
+                  <option value="training">大模型训练与对齐</option>
+                  <option value="rag">RAG 与 Agent 应用</option>
+                </select>
+              </label>
+
+              <button class="btn btn-primary" id="start-session" type="submit">
+                开始面试
+              </button>
+              <div id="session-status" aria-live="polite"></div>
+            </form>
+          </div>
+
+          <div class="interview-live" id="interview-live" tabindex="-1" hidden>
+            <section class="directions-block" aria-labelledby="directions-title">
+              <p class="section-label">本场固定方向</p>
+              <h2 id="directions-title">接下来会沿这些链路逐步深挖</h2>
+              <ol class="direction-list" id="direction-list"></ol>
+            </section>
+            <section class="first-question" aria-labelledby="first-question-title">
+              <p class="section-label" id="first-question-title">面试官</p>
+              <p id="first-question"></p>
+            </section>
+            <p class="clone-notice" id="clone-notice" hidden></p>
           </div>
         </section>
 

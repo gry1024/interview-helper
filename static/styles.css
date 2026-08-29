@@ -6,6 +6,7 @@
   --fg-secondary: #6e6e73;
   --fg-tertiary: #86868b;
   --accent-blue: #0071e3;
+  --focus-ring: rgb(0 113 227 / 12%);
   --danger: #ff3b30;
   --divider: #d2d2d7;
   --divider-subtle: #e8e8ed;
@@ -43,6 +44,13 @@ button {
   color: inherit;
   cursor: pointer;
   font: inherit;
+}
+
+input,
+select,
+textarea {
+  color: inherit;
+  font-family: var(--font-sans);
 }
 
 .app-shell {
@@ -180,6 +188,151 @@ h1 {
   line-height: 2;
   margin-top: 32px;
   max-width: 680px;
+}
+
+.session-form {
+  border-top: 1px solid var(--divider-subtle);
+  display: grid;
+  gap: 24px;
+  margin-top: 56px;
+  padding-top: 32px;
+}
+
+.field {
+  display: grid;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  gap: 8px;
+}
+
+.field > span {
+  color: var(--fg-secondary);
+}
+
+.input {
+  background: var(--bg-elevated);
+  border: 1px solid var(--divider);
+  border-radius: var(--radius);
+  font-size: 14px;
+  line-height: 1.55;
+  outline: none;
+  padding: 10px 12px;
+  transition:
+    border-color 0.2s,
+    box-shadow 0.2s;
+  width: 100%;
+}
+
+.input:focus {
+  border-color: var(--accent-blue);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.input::placeholder {
+  color: var(--fg-tertiary);
+}
+
+textarea.input {
+  min-height: 180px;
+  resize: vertical;
+}
+
+.btn {
+  align-items: center;
+  background: var(--bg-elevated);
+  border: 1px solid var(--divider);
+  border-radius: var(--radius);
+  display: inline-flex;
+  font-family: var(--font-sans);
+  font-size: 14px;
+  justify-content: center;
+  min-height: 44px;
+  padding: 9px 24px;
+  transition:
+    background 0.2s,
+    opacity 0.15s;
+  width: fit-content;
+}
+
+.btn:hover {
+  background: var(--bg-hover);
+}
+
+.btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.btn-primary {
+  background: var(--fg);
+  border-color: var(--fg);
+  color: var(--bg-elevated);
+}
+
+.btn-primary:hover {
+  background: var(--fg);
+  opacity: 0.86;
+}
+
+.interview-live {
+  border-top: 1px solid var(--divider-subtle);
+  margin-top: 56px;
+  padding-top: 32px;
+}
+
+.interview-live[hidden] {
+  display: none;
+}
+
+.directions-block h2 {
+  font-size: 24px;
+  font-weight: 500;
+  margin-top: 4px;
+}
+
+.direction-list {
+  list-style: none;
+  margin-top: 24px;
+}
+
+.direction-item {
+  border-bottom: 1px solid var(--divider-subtle);
+  counter-increment: direction;
+  padding: 20px 0;
+}
+
+.direction-title {
+  font-family: var(--font-serif);
+  font-size: 17px;
+  font-weight: 500;
+}
+
+.direction-goal {
+  color: var(--fg-secondary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.8;
+  margin-top: 6px;
+}
+
+.first-question {
+  background: var(--bg-elevated);
+  border-left: 2px solid var(--fg);
+  margin-top: 48px;
+  padding: 20px 24px;
+}
+
+.first-question > p:last-child {
+  font-size: 17px;
+  line-height: 1.85;
+  margin-top: 6px;
+}
+
+.clone-notice {
+  color: var(--fg-secondary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  margin-top: 16px;
 }
 
 .divider-section {
