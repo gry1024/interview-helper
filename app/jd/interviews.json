@@ -10,6 +10,26 @@
     "captured_at": "2026-08-30"
   },
   {
+    "id": "bytedance-llm-daily-intern-interview",
+    "kind": "interview",
+    "company": "字节跳动",
+    "role": "大模型算法日常实习",
+    "source_url": "https://www.nowcoder.com/feed/main/detail/62b251b2c7164868837f11b3ae9579f6",
+    "source_name": "牛客面经",
+    "text": "详细追问 Decoder 因果注意力里 QKV 分别来自哪、Attention 为什么要做 scaled、Transformer 如何用 KV Cache 加速以及训练与推理的并行差异；继续问 LoRA 原理、初始化与秩选择，以及 DeepSpeed 与 Megatron 的分工和 ZeRO 三个 stage。",
+    "captured_at": "2026-08-30"
+  },
+  {
+    "id": "meituan-llm-intern-interview",
+    "kind": "interview",
+    "company": "美团",
+    "role": "LLM 算法实习",
+    "source_url": "https://www.nowcoder.com/feed/main/detail/96f34b052c4c41bb8c37c27b417066c9",
+    "source_name": "牛客面经",
+    "text": "问主流 MLLM 及其技术、主流 LLM 架构类别（encoder-only / decoder-only / encoder-decoder），并追问项目用的微调方法；重点核对 LoRA 实现细节与秩如何选择。",
+    "captured_at": "2026-08-30"
+  },
+  {
     "id": "tencent-llm-algorithm-second-interview",
     "kind": "interview",
     "company": "腾讯",
@@ -17,6 +37,16 @@
     "source_url": "https://www.nowcoder.com/feed/main/detail/8d751ffe6b9244d18e4d0f637ce070ce",
     "source_name": "牛客面经",
     "text": "追问 GRPO 与 PPO 在 RLHF 中的核心区别及选型理由、KL 散度的作用、vLLM 如何用 PagedAttention 提升显存利用率、Qwen3 与 DeepSeek-R1 的架构差异；项目部分追问微调数据结构、数量、清洗与有效性验证，奖励函数如何避免模型堆字数刷奖励，以及部署时上下文长度、显存、量化和动态批处理之间的取舍。",
+    "captured_at": "2026-08-30"
+  },
+  {
+    "id": "alibaba-taotian-llm-intern-interview",
+    "kind": "interview",
+    "company": "阿里巴巴淘天集团",
+    "role": "大模型算法实习",
+    "source_url": "https://www.nowcoder.com/feed/main/detail/5cd5d7ce7e60412dbc78ba5d21b27834",
+    "source_name": "牛客面经",
+    "text": "从 Attention 数学本质追到 Agent 多轮对话里的局限；继续问 SFT 流程与数据构造、PPO/DPO/GRPO 区别与注意事项；项目侧追问工具调用链路调度与异常 fallback，以及 Agent 评估中如何衡量 planning 与 hallucination rate。",
     "captured_at": "2026-08-30"
   },
   {

@@ -10,6 +10,46 @@
     "captured_at": "2026-08-30"
   },
   {
+    "id": "bytedance-llm-posttraining-rl-intern-2026",
+    "kind": "jd",
+    "company": "ByteDance",
+    "role": "Student Researcher (LLM Post Training – Agent & Reinforcement Learning)",
+    "source_url": "https://joinbytedance.com/search/7670325736893565189",
+    "source_name": "ByteDance Careers",
+    "text": "Seed LLM Post Training 团队研究 SFT、RM、RL 和 self-learning；职责包括数据构建、instruction tuning、preference alignment、模型优化，以及提升 reasoning、code、math 等能力。",
+    "captured_at": "2026-08-30"
+  },
+  {
+    "id": "bytedance-seed-llm-research-intern-2027",
+    "kind": "jd",
+    "company": "ByteDance",
+    "role": "Student Researcher (LLM - Seed)",
+    "source_url": "https://joinbytedance.com/search/7623539152655632693",
+    "source_name": "ByteDance Careers",
+    "text": "团队方向覆盖 model pretraining、posttraining、inference、memory、learning 与 interpretability；实习生负责基础模型及相关系统研究、改进推理与模型性能，并设计算法、模型或系统原型。",
+    "captured_at": "2026-08-30"
+  },
+  {
+    "id": "bytedance-ai-native-rag-db-intern-2027",
+    "kind": "jd",
+    "company": "ByteDance",
+    "role": "Software Engineer Intern (Distributed NoSQL Database Systems)",
+    "source_url": "https://jobs.bytedance.com/en/position/7668373268886161669/detail",
+    "source_name": "ByteDance Careers",
+    "text": "岗位建设面向大模型的 AI-native database，将系统作为 AI Agent 的 reasoning engine、retrieval platform 和 real-time memory；优先条件明确包括对 RAG、memory-augmented models 或 self-tuning database components 的贡献经历。",
+    "captured_at": "2026-08-30"
+  },
+  {
+    "id": "baidu-agent-algorithm-intern-j97505",
+    "kind": "jd",
+    "company": "百度",
+    "role": "Agent算法实习生（J97505）",
+    "source_url": "https://talent.baidu.com/jobs/detail/INTERN/cd423c1c-7a35-4672-b0a7-2857308efe43",
+    "source_name": "百度校园招聘",
+    "text": "参与自进化决策 Agent 系统研发，设计 Generate → Evaluate → Refine 决策闭环，探索 Self-Refine、Multi-Agent 协作及强化学习；搭建 Planner、Solver、Evaluator、Memory 等组件。要求在 RL/MARL、进化算法或 LLM Agent 框架至少一个方向有实践经验。",
+    "captured_at": "2026-08-30"
+  },
+  {
     "id": "xiaohongshu-llm-post-training-intern-2026",
     "kind": "jd",
     "company": "小红书",
