@@ -13,9 +13,9 @@
     >
     <link rel="preconnect" href="https://registry.npmmirror.com">
     <link rel="preconnect" href="https://cdn.jsdelivr.net">
-    <link rel="stylesheet" href="/styles.css?v=11">
+    <link rel="stylesheet" href="/styles.css?v=15">
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
-    <script src="/app.js?v=11" defer></script>
+    <script src="/app.js?v=15" defer></script>
   </head>
   <body>
     <div class="app-shell">
@@ -79,10 +79,7 @@
         >
           <p class="eyebrow">模拟面试</p>
           <h1>把简历上的项目，<br>变成你真正拥有的项目。</h1>
-          <p class="lead">
-            不测八股，不测刷题。面试官会沿着预先确定的方向逐步追问，
-            必要时核对代码，直到确认你是否真正理解自己的项目。
-          </p>
+          <p class="lead">只问你的一个项目，以及它对岗位是否真正有价值。</p>
 
           <div class="interview-start" id="interview-start">
             <form class="session-form" id="session-form" novalidate>
@@ -101,7 +98,7 @@
                   required
                 >
                 <p class="field-hint" id="github-hint">
-                  这是你项目对应的代码 GitHub 仓库。面试官按需核对陈述是否与代码相符，不会把整仓灌进上下文。
+                  这是你项目对应的代码 GitHub 仓库。面试官最终会按需核对陈述是否与代码相符。
                 </p>
               </label>
 
@@ -111,7 +108,7 @@
                   class="input"
                   id="statement"
                   name="statement"
-                  rows="8"
+                  rows="7"
                   maxlength="8000"
                   placeholder="粘贴简历中对这个项目的原始描述"
                   required
@@ -159,6 +156,9 @@
                   <div class="composer-actions">
                     <button class="btn btn-primary" id="send-answer" type="submit">
                       发送
+                    </button>
+                    <button class="btn" id="ask-teacher" type="button">
+                      求助老师
                     </button>
                     <button class="btn" id="end-interview" type="button" disabled>
                       结束面试
@@ -231,7 +231,6 @@
         >
           <p class="eyebrow">JD/面经库</p>
           <h1>岗位本质，来自真实招聘与真实面试。</h1>
-          <p class="lead">先选 JD 或面经，再点开卡片看详情。这里只收录有可核对来源的真实样本，不生成、不编造。</p>
           <div
             class="library-kind-switch"
             role="tablist"

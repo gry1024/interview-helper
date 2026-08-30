@@ -44,7 +44,7 @@ def _legal_turn_json() -> dict[str, Any]:
             "本方向结束：否，因为输入表示还没问清。"
         ),
         "direction_done": False,
-        "next_question": "编辑器里先把 QKV 投影和缩放写出来，同时口头说一下每个头的 shape？",
+        "next_question": "编辑器里先写出 Q 的投影公式？",
     }
 
 
@@ -185,6 +185,9 @@ def test_run_turn_opens_catalog_exercise_not_invented(monkeypatch) -> None:
     assert "已打开手撕题" in event["result"]
     assert CODE_INSPECT_TOOL in completions.calls[0]["tools"]
     assert CODE_EXERCISE_TOOL in completions.calls[0]["tools"]
+    from app.tools.search_library import SEARCH_LIBRARY_TOOL
+
+    assert SEARCH_LIBRARY_TOOL in completions.calls[0]["tools"]
 
 
 def test_run_turn_rejects_invented_exercise_id(monkeypatch) -> None:
@@ -231,8 +234,7 @@ def test_run_turn_forces_exercise_when_student_asks_to_write(monkeypatch) -> Non
     assert next_id == "d1"
     assert result.direction_done is False
     assert requested_code_exercise_args(answer="请打开手撕题") is not None
-    event = tools["events"][0]
-    assert event["name"] == "code_exercise"
+    event = next(item for item in tools["events"] if item["name"] == "code_exercise")
     assert event["payload"]["exercise_id"] == "rope-apply"
     assert "已打开手撕题" in event["result"]
 
@@ -248,7 +250,9 @@ def test_run_turn_submission_does_not_offer_exercise_tool(monkeypatch) -> None:
         answer="[手撕提交 exercise_id=mha-forward]\n学生代码：\npass",
         allow_code_exercise=False,
     )
-    assert completions.calls[0]["tools"] == [CODE_INSPECT_TOOL]
+    from app.tools.search_library import SEARCH_LIBRARY_TOOL
+
+    assert completions.calls[0]["tools"] == [CODE_INSPECT_TOOL, SEARCH_LIBRARY_TOOL]
 
 
 def test_turns_sse_emits_code_exercise_event(

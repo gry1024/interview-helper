@@ -119,6 +119,7 @@ def build_report_from_parts(
 def build_end_report_context(
     session: Mapping[str, Any],
     turns: Sequence[Mapping[str, Any]],
+    helps: Sequence[Mapping[str, Any]] | None = None,
 ) -> str:
     """User payload for the future end-report LLM call. No bodies omitted."""
 
@@ -129,6 +130,16 @@ def build_end_report_context(
         "directions": _as_directions(session),
         "current_direction_id": session.get("current_direction_id"),
         "clone_ok": bool(session.get("clone_ok", False)),
+        "help_count": len(helps or []),
+        "helps": [
+            {
+                "question": item.get("question"),
+                "hint": item.get("hint"),
+                "looked_at_code": bool(item.get("looked_at_code")),
+                "direction_id": item.get("direction_id"),
+            }
+            for item in (helps or [])
+        ],
         "turns": [
             {
                 "seq": turn["seq"],
@@ -147,6 +158,7 @@ def assemble_review_snapshot(
     session: Mapping[str, Any],
     turns: Sequence[Mapping[str, Any]],
     report_text: str,
+    helps: Sequence[Mapping[str, Any]] | None = None,
 ) -> ReviewSnapshot:
     """Freeze session + all turns + full report at the end moment.
 
@@ -179,12 +191,26 @@ def assemble_review_snapshot(
         }
         for turn in turns
     ]
+    help_copies = [
+        {
+            "id": item.get("id"),
+            "session_id": item.get("session_id", session["id"]),
+            "created_at": item.get("created_at"),
+            "question": item.get("question") or "",
+            "hint": item.get("hint") or "",
+            "looked_at_code": bool(item.get("looked_at_code")),
+            "inspect_public": item.get("inspect_public"),
+            "direction_id": item.get("direction_id"),
+        }
+        for item in (helps or [])
+    ]
     return ReviewSnapshot.model_validate(
         {
             "schema_version": REVIEW_SNAPSHOT_SCHEMA_VERSION,
             "session": session_copy,
             "turns": turn_copies,
             "report": {"text": frozen_report},
+            "helps": help_copies,
         }
     )
 
@@ -202,10 +228,13 @@ def dump_end_snapshot(
     session: Mapping[str, Any],
     turns: Sequence[Mapping[str, Any]],
     report_text: str,
+    helps: Sequence[Mapping[str, Any]] | None = None,
 ) -> str:
     """Serialize the end-moment snapshot. Only call from the future /end handler."""
 
-    return snapshot_to_json(assemble_review_snapshot(session, turns, report_text))
+    return snapshot_to_json(
+        assemble_review_snapshot(session, turns, report_text, helps)
+    )
 
 
 def load_review_for_replay(snapshot_json: str) -> ReviewSnapshot:

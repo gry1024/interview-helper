@@ -15,13 +15,14 @@ def valid_plan() -> dict:
             {"id": "d2", "title": "训练流程", "goal": "问清预训练到对齐的衔接"},
             {"id": "d3", "title": "数据质量", "goal": "问清清洗规则与验证方法"},
         ],
-        "first_question": "一个 token ID 进入模型后，先怎样变成 hidden state？",
+        "first_question": "先讲讲你这个项目主要做成了哪几块？",
     }
 
 
 def test_accepts_incremental_first_question() -> None:
     plan = DirectionPlan.model_validate(valid_plan())
     assert plan.directions[0].id == "d1"
+    assert "哪几块" in plan.first_question
 
 
 @pytest.mark.parametrize(
@@ -61,7 +62,7 @@ def test_plan_directions_retries_invalid_first_question(monkeypatch) -> None:
     monkeypatch.setattr("app.agent.complete_json", fake_complete)
     plan = plan_directions("复现了 RoPE、RMSNorm 与 SwiGLU。", "llm-algo")
     assert calls["n"] == 2
-    assert plan.first_question.startswith("一个 token ID")
+    assert "哪几块" in plan.first_question or "项目" in plan.first_question
 
 
 def test_plan_directions_gives_up_after_repeated_invalid_plans(monkeypatch) -> None:

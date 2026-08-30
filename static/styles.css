@@ -431,6 +431,28 @@ textarea.input {
   max-width: 100%;
 }
 
+.teacher-hint {
+  background: var(--bg-elevated);
+  border: 1px dashed var(--divider);
+  border-radius: var(--radius);
+  max-width: min(720px, 92%);
+  padding: 12px 14px;
+}
+
+.teacher-hint-kicker {
+  color: #3a3a3c;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  margin: 0 0 6px;
+}
+
+.teacher-hint-body {
+  color: var(--fg);
+  font-size: 15px;
+  line-height: 1.75;
+  margin: 0;
+}
+
 .thought {
   color: var(--fg-secondary);
   font-family: var(--mono, ui-monospace, "SF Mono", Menlo, Consolas, monospace);
@@ -920,6 +942,47 @@ textarea.input {
   line-height: 1.5;
 }
 
+.library-card-excerpt {
+  color: #3a3a3c;
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.library-card-excerpt strong,
+.modal-meta-value strong {
+  color: var(--fg);
+  font-weight: 650;
+}
+
+.source-mark {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1;
+}
+
+.source-logo {
+  display: inline-flex;
+  flex-shrink: 0;
+  height: 18px;
+  width: 18px;
+}
+
+.source-logo svg {
+  display: block;
+}
+
+.source-mark-name {
+  color: #3a3a3c;
+  font-weight: 500;
+}
+
+.source-mark-xhs .source-mark-name {
+  color: #ff2442;
+}
+
 .library-section + .library-section {
   margin-top: 56px;
 }
@@ -1214,4 +1277,54 @@ body.modal-open {
     animation-iteration-count: 1 !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* 仅模拟面试「开始前」首页：相对原稿略收空白。不改进行中 / 复盘 / JD 库。 */
+.main-content:has(> #panel-interview:not([hidden]) #interview-start:not([hidden])) {
+  align-items: flex-start;
+  padding-bottom: 48px;
+  padding-top: 48px;
+}
+
+#panel-interview:has(#interview-start:not([hidden])) > .eyebrow {
+  margin-bottom: 18px;
+}
+
+#panel-interview:has(#interview-start:not([hidden])) > h1 {
+  font-size: clamp(40px, 4vw, 56px);
+  line-height: 1.24;
+}
+
+#panel-interview:has(#interview-start:not([hidden])) > .lead {
+  font-size: 16px;
+  line-height: 1.8;
+  margin-top: 22px;
+}
+
+#interview-start .session-form {
+  gap: 20px;
+  margin-top: 40px;
+  padding-top: 24px;
+}
+
+#interview-start .field {
+  gap: 8px;
+}
+
+#interview-start .field-hint {
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+#interview-start textarea.input {
+  min-height: 156px;
+}
+
+#interview-start #session-status:empty {
+  display: none;
+}
+
+#interview-start #session-status .flash,
+#interview-start #session-status .loading-state {
+  padding: 12px 0;
 }

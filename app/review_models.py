@@ -54,6 +54,21 @@ class ReviewReport(BaseModel):
     text: str = Field(min_length=1)
 
 
+class ReviewHelp(BaseModel):
+    """One teacher-hint request, frozen for end-report evaluation."""
+
+    model_config = ConfigDict(extra="allow")
+
+    id: int | None = None
+    session_id: str | None = None
+    created_at: str | None = None
+    question: str
+    hint: str
+    looked_at_code: bool = False
+    inspect_public: str | None = None
+    direction_id: str | None = None
+
+
 class ReviewSnapshot(BaseModel):
     """Complete end-moment copy: session + all turns + full report.
 
@@ -66,6 +81,7 @@ class ReviewSnapshot(BaseModel):
     session: ReviewSession
     turns: list[ReviewTurn]
     report: ReviewReport
+    helps: list[ReviewHelp] = []
 
 
 class ReviewListItem(BaseModel):

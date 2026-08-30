@@ -299,11 +299,11 @@ def test_run_turn_forces_inspect_when_model_skips_fabricated_claim(
     assert next_id == "d1"
     assert result.direction_done is False
     assert tools["events"]
-    assert tools["events"][0]["name"] == "code_inspect"
+    inspect_event = next(item for item in tools["events"] if item["name"] == "code_inspect")
     assert "查代码：是" in result.thought
-    assert "未体现" in tools["events"][0]["result"]
-    assert "rerank" in tools["events"][0]["result"]
-    assert "万卡" in tools["events"][0]["result"]
+    assert "未体现" in inspect_event["result"]
+    assert "rerank" in inspect_event["result"]
+    assert "万卡" in inspect_event["result"]
     assert CODE_COORDINATE.search(result.next_question) is None
 
 

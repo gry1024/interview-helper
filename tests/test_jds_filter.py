@@ -3,7 +3,7 @@
 from fastapi.testclient import TestClient
 
 from app import main as main_mod
-from app.main import is_graduate_targeted, publish_library
+from app.main import is_graduate_targeted, is_xiaohongshu_sample, publish_library
 
 
 def test_education_field_filters_master_and_phd() -> None:
@@ -91,3 +91,37 @@ def test_api_jds_splits_kind_and_drops_graduate(monkeypatch) -> None:
     assert data["jds"][0]["requirements"] == "熟悉 Transformer"
     assert data["interviews"][0]["question_types"] == ["Attention"]
     assert data["interviews"][0]["experience"] == "项目拷打很深"
+
+
+def test_publish_library_puts_xiaohongshu_first(monkeypatch) -> None:
+    def fake_load(filename: str):
+        if filename == "jds.json":
+            return []
+        return [
+            {
+                "id": "nowcoder-later",
+                "company": "牛客公司",
+                "role": "面经",
+                "kind": "interview",
+                "source_url": "https://www.nowcoder.com/feed/a",
+                "source_name": "牛客网",
+                "text": "问了 Attention",
+            },
+            {
+                "id": "xhs-first",
+                "company": "小红书帖",
+                "role": "面经",
+                "kind": "interview",
+                "source_url": "https://www.xiaohongshu.com/explore/abc",
+                "source_name": "小红书",
+                "text": "手撕 LoRA",
+            },
+        ]
+
+    monkeypatch.setattr(main_mod, "_load_samples", fake_load)
+    payload = publish_library()
+    assert [item["id"] for item in payload["interviews"]] == [
+        "xhs-first",
+        "nowcoder-later",
+    ]
+    assert is_xiaohongshu_sample(payload["interviews"][0])

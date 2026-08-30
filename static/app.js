@@ -11,6 +11,7 @@ const chatLog = document.querySelector("#chat-log");
 const chatForm = document.querySelector("#chat-form");
 const answerInput = document.querySelector("#answer-input");
 const sendAnswerButton = document.querySelector("#send-answer");
+const askTeacherButton = document.querySelector("#ask-teacher");
 const endInterviewButton = document.querySelector("#end-interview");
 const turnStatus = document.querySelector("#turn-status");
 const reviewsRoot = document.querySelector("#reviews-root");
@@ -144,6 +145,71 @@ function kindOfSample(sample, fallback) {
   return fallback;
 }
 
+const LIBRARY_KEYWORDS = [
+  "Multi-Head Attention",
+  "PagedAttention",
+  "KV cache",
+  "KV Cache",
+  "Transformer",
+  "Attention",
+  "RMSNorm",
+  "SwiGLU",
+  "RoPE",
+  "LoRA",
+  "GRPO",
+  "RLHF",
+  "PPO",
+  "DPO",
+  "SFT",
+  "RAG",
+  "Agent",
+  "Tokenizer",
+  "手撕",
+  "实习",
+  "一面",
+  "二面",
+];
+
+function isXiaohongshuSample(sample) {
+  const blob = `${sample.source_name || ""} ${sample.source_url || ""}`.toLowerCase();
+  return blob.includes("小红书") || blob.includes("xiaohongshu") || blob.includes("xhslink");
+}
+
+function sourcePlatform(sample) {
+  const blob = `${sample.source_name || ""} ${sample.source_url || ""}`.toLowerCase();
+  if (isXiaohongshuSample(sample)) {
+    return "xhs";
+  }
+  if (blob.includes("牛客") || blob.includes("nowcoder")) {
+    return "nowcoder";
+  }
+  return "official";
+}
+
+function sourceLabel(sample) {
+  const platform = sourcePlatform(sample);
+  if (platform === "xhs") {
+    return "小红书";
+  }
+  if (platform === "nowcoder") {
+    return "牛客";
+  }
+  return sample.source_name || "官方招聘";
+}
+
+function sortLibrarySamples(samples) {
+  return [...samples].sort((left, right) => {
+    const leftRank = isXiaohongshuSample(left) ? 0 : 1;
+    const rightRank = isXiaohongshuSample(right) ? 0 : 1;
+    if (leftRank !== rightRank) {
+      return leftRank - rightRank;
+    }
+    const leftKey = `${left.captured_at || left.published_at || ""}${left.id || ""}`;
+    const rightKey = `${right.captured_at || right.published_at || ""}${right.id || ""}`;
+    return leftKey.localeCompare(rightKey);
+  });
+}
+
 function partitionLibrary(data) {
   const buckets = { jds: [], interviews: [] };
   const rows = [
@@ -166,7 +232,61 @@ function partitionLibrary(data) {
       buckets.jds.push(sample);
     }
   }
+  buckets.jds = sortLibrarySamples(buckets.jds);
+  buckets.interviews = sortLibrarySamples(buckets.interviews);
   return buckets;
+}
+
+function appendHighlightedText(parent, text) {
+  const source = String(text || "");
+  if (!source) {
+    parent.append(document.createTextNode("暂无"));
+    return;
+  }
+  const pattern = new RegExp(
+    `(${LIBRARY_KEYWORDS.map((word) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`,
+    "gi",
+  );
+  let cursor = 0;
+  for (const match of source.matchAll(pattern)) {
+    const index = match.index ?? 0;
+    if (index > cursor) {
+      parent.append(document.createTextNode(source.slice(cursor, index)));
+    }
+    const strong = document.createElement("strong");
+    strong.textContent = match[0];
+    parent.append(strong);
+    cursor = index + match[0].length;
+  }
+  if (cursor < source.length) {
+    parent.append(document.createTextNode(source.slice(cursor)));
+  }
+}
+
+function createSourceMark(sample) {
+  const platform = sourcePlatform(sample);
+  const mark = document.createElement("span");
+  mark.className = `source-mark source-mark-${platform}`;
+
+  const logo = document.createElement("span");
+  logo.className = "source-logo";
+  logo.setAttribute("aria-hidden", "true");
+  if (platform === "xhs") {
+    logo.innerHTML =
+      '<svg viewBox="0 0 32 32" width="18" height="18"><rect width="32" height="32" rx="6" fill="#FF2442"/><text x="16" y="21" text-anchor="middle" fill="#fff" font-size="11" font-family="sans-serif" font-weight="700">红</text></svg>';
+  } else if (platform === "nowcoder") {
+    logo.innerHTML =
+      '<svg viewBox="0 0 32 32" width="18" height="18"><rect width="32" height="32" rx="6" fill="#19B24B"/><text x="16" y="21" text-anchor="middle" fill="#fff" font-size="11" font-family="sans-serif" font-weight="700">牛</text></svg>';
+  } else {
+    logo.innerHTML =
+      '<svg viewBox="0 0 32 32" width="18" height="18"><rect width="32" height="32" rx="6" fill="#1D1D1F"/><text x="16" y="21" text-anchor="middle" fill="#fff" font-size="11" font-family="sans-serif" font-weight="700">招</text></svg>';
+  }
+
+  const name = document.createElement("span");
+  name.className = "source-mark-name";
+  name.textContent = sourceLabel(sample);
+  mark.append(logo, name);
+  return mark;
 }
 
 function closeLibraryModal() {
@@ -208,11 +328,18 @@ function openSampleDetail(sample, kind) {
   const body = document.createElement("div");
   body.className = "modal-body";
 
+  header.prepend(createSourceMark(sample));
+
   const addField = (label, value) => {
-    body.append(
-      createTextElement("p", "modal-meta-label", label),
-      createTextElement("p", "modal-meta-value", value),
-    );
+    body.append(createTextElement("p", "modal-meta-label", label));
+    const paragraph = document.createElement("p");
+    paragraph.className = "modal-meta-value";
+    if (!value || value === "暂无") {
+      paragraph.textContent = "暂无";
+    } else {
+      appendHighlightedText(paragraph, value);
+    }
+    body.append(paragraph);
   };
 
   addField("发布日期", displayOrNone(sample.published_at || sample.captured_at));
@@ -252,9 +379,18 @@ function renderLibraryCard(sample, kind) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "library-card";
+  const excerpt = document.createElement("p");
+  excerpt.className = "library-card-excerpt";
+  const raw =
+    kind === "interview"
+      ? sample.text || sample.experience || ""
+      : sample.text || sample.requirements || "";
+  appendHighlightedText(excerpt, raw.slice(0, 72) + (raw.length > 72 ? "…" : ""));
   button.append(
+    createSourceMark(sample),
     createTextElement("span", "library-card-company", sample.company || "未知公司"),
     createTextElement("span", "library-card-role", sample.role || "未命名岗位"),
+    excerpt,
   );
   button.addEventListener("click", () => {
     openSampleDetail(sample, kind);
@@ -386,7 +522,20 @@ function appendInterviewerBubble(text, directionId, container = chatLog) {
   container.scrollTop = container.scrollHeight;
   if (container === chatLog) {
     setCurrentDirection(directionId);
+    interviewLive.dataset.currentQuestion = text;
   }
+  return row;
+}
+
+function appendTeacherHint(hint, container = chatLog) {
+  const row = document.createElement("div");
+  row.className = "teacher-hint";
+  row.append(
+    createTextElement("p", "teacher-hint-kicker", "老师提示 · 请用自己的话回答"),
+    createTextElement("p", "teacher-hint-body", hint),
+  );
+  container.append(row);
+  container.scrollTop = container.scrollHeight;
   return row;
 }
 
@@ -433,6 +582,9 @@ function setComposerEnabled(enabled) {
   if (sendAnswerButton) {
     sendAnswerButton.disabled = !enabled;
     sendAnswerButton.setAttribute("aria-disabled", String(!enabled));
+  }
+  if (askTeacherButton) {
+    askTeacherButton.disabled = !enabled;
   }
   if (endInterviewButton) {
     endInterviewButton.disabled = !enabled;
@@ -1034,6 +1186,9 @@ function setTurnLoading(isLoading) {
       String(isLoading || sessionHasEnded()),
     );
   }
+  if (askTeacherButton) {
+    askTeacherButton.disabled = isLoading || sessionHasEnded();
+  }
   if (endInterviewButton) {
     endInterviewButton.disabled =
       isLoading ||
@@ -1464,13 +1619,23 @@ function renderReportTabs(reportText, reportPane) {
   show("overview");
 }
 
-function renderTurnsInto(container, turns) {
+function renderTurnsInto(container, turns, helps) {
   container.replaceChildren();
   let thoughtNode = null;
+  const leftover = [...(helps || [])];
   for (const turn of turns || []) {
     if (turn.role === "interviewer") {
       appendInterviewerBubble(turn.body, turn.direction_id, container);
       thoughtNode = null;
+      const remaining = [];
+      leftover.forEach((item) => {
+        if (item.question === turn.body) {
+          appendTeacherHint(item.hint, container);
+        } else {
+          remaining.push(item);
+        }
+      });
+      leftover.splice(0, leftover.length, ...remaining);
     } else if (turn.role === "user") {
       thoughtNode = appendUserBlock(turn.body, container);
     } else if (turn.role === "thought" && thoughtNode) {
@@ -1479,13 +1644,14 @@ function renderTurnsInto(container, turns) {
       thoughtNode = null;
     }
   }
+  leftover.forEach((item) => appendTeacherHint(item.hint, container));
 }
 
 function renderEndedView(snapshot, container) {
   const chatPane = document.createElement("div");
   chatPane.className = "ended-pane ended-pane-chat";
   chatPane.setAttribute("data-ended-chat", "1");
-  renderTurnsInto(chatPane, snapshot.turns || []);
+  renderTurnsInto(chatPane, snapshot.turns || [], snapshot.helps || []);
 
   const divider = document.createElement("div");
   divider.className = "ended-view-divider";
@@ -1778,7 +1944,46 @@ tabs.forEach((tab, index) => {
 });
 
 sessionForm?.addEventListener("submit", submitSession);
+async function requestTeacherHint() {
+  const sessionId = interviewLive?.dataset.sessionId;
+  const question = interviewLive?.dataset.currentQuestion || "";
+  if (!sessionId || turnInFlight || sessionHasEnded()) {
+    return;
+  }
+  setTurnLoading(true);
+  if (turnStatus) {
+    turnStatus.replaceChildren(createLoadingState("老师正在看这道题"));
+  }
+  try {
+    const response = await fetch(`/api/sessions/${sessionId}/hints`, {
+      method: "POST",
+      headers: { Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({ question }),
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      throw new Error(apiErrorMessage(data, "老师暂时无法给出提示"));
+    }
+    appendTeacherHint(data.hint || "");
+    setTurnLoading(false);
+    answerInput?.focus();
+  } catch (error) {
+    console.error("Teacher hint failed", error);
+    setTurnLoading(false);
+    turnStatus?.replaceChildren(
+      createTextElement(
+        "p",
+        "flash error",
+        error instanceof Error ? error.message : "老师暂时无法给出提示",
+      ),
+    );
+  }
+}
+
 chatForm?.addEventListener("submit", submitTurn);
+askTeacherButton?.addEventListener("click", () => {
+  void requestTeacherHint();
+});
 endInterviewButton?.addEventListener("click", () => {
   void submitEndInterview();
 });

@@ -58,6 +58,21 @@ def init_db() -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS helps (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                question TEXT NOT NULL,
+                hint TEXT NOT NULL,
+                looked_at_code INTEGER NOT NULL DEFAULT 0
+                    CHECK (looked_at_code IN (0, 1)),
+                inspect_public TEXT,
+                direction_id TEXT
+            )
+            """
+        )
         from app.db_reviews import init_reviews_table
 
         init_reviews_table(connection)
@@ -227,6 +242,67 @@ def append_turn_bundle(
             (next_direction_id, session_id),
         )
         connection.commit()
+
+
+def append_help(
+    *,
+    session_id: str,
+    question: str,
+    hint: str,
+    looked_at_code: bool,
+    inspect_public: str | None,
+    direction_id: str | None,
+) -> dict[str, Any]:
+    created_at = datetime.now(timezone.utc).isoformat()
+    with _write_lock, closing(connect()) as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO helps (
+                session_id, created_at, question, hint, looked_at_code,
+                inspect_public, direction_id
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session_id,
+                created_at,
+                question,
+                hint,
+                int(looked_at_code),
+                inspect_public,
+                direction_id,
+            ),
+        )
+        connection.commit()
+        help_id = cursor.lastrowid
+    return {
+        "id": help_id,
+        "session_id": session_id,
+        "created_at": created_at,
+        "question": question,
+        "hint": hint,
+        "looked_at_code": looked_at_code,
+        "inspect_public": inspect_public,
+        "direction_id": direction_id,
+    }
+
+
+def list_helps(session_id: str) -> list[dict[str, Any]]:
+    with closing(connect()) as connection:
+        rows = connection.execute(
+            """
+            SELECT * FROM helps
+            WHERE session_id = ?
+            ORDER BY id ASC
+            """,
+            (session_id,),
+        ).fetchall()
+    helps: list[dict[str, Any]] = []
+    for row in rows:
+        item = dict(row)
+        item["looked_at_code"] = bool(item["looked_at_code"])
+        helps.append(item)
+    return helps
 
 
 def mark_session_ended(session_id: str) -> None:

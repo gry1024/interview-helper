@@ -28,7 +28,7 @@ from app.report import PRIMARY_BAND_RANK, extract_primary_band  # noqa: E402
 PUBLIC_URL = "http://120.26.176.60"
 GITHUB_URL = "https://github.com/jingyaogong/minimind.git"
 ROLE = "llm-algo"
-MIN_ANSWERS = 6
+MIN_ANSWERS = 14
 TURN_TIMEOUT_MS = 300_000
 START_TIMEOUT_MS = 180_000
 END_TIMEOUT_MS = 300_000
@@ -47,38 +47,55 @@ MIND_STATEMENT = (
 )
 EXCELLENT_CATALOG = [
     (
-        ("共享", "复用", "转置", "logits", "同一份", "同一张", "是不是", "tying", "输出层"),
-        "是。最后一层把 hidden state 映射成词表大小的 logits，我按 LLaMA 系常见做法做 weight tying：LM head 和 embedding 共用同一张表的转置。省一套 vocab×hidden 参数，也让输入输出空间对齐；风险是改一边会牵动另一边。我没另训独立输出头。",
+        ("哪几块", "做成", "介绍", "项目", "主干", "框架", "流水线"),
+        "这个项目我做成四块。第一块是自己训的 Tokenizer，把中文语料切成 token。第二块是 Decoder-only 的类 LLaMA 结构：embedding 查表、RoPE 旋 Q/K、RMSNorm、SwiGLU，最后用 weight tying 出 logits。第三块是预训练，做 next-token。第四块是 SFT 加 DPO：指令模板只在回答 token 上算损失，再用偏好对做对齐。我没做 RAG、rerank，也没有万卡分布式，就是单机把闭环跑通。",
     ),
     (
-        ("embedding", "token id", "hidden", "查表", "整数", "下标"),
-        "token ID 先是词表里的整数下标，会去查 embedding 表，得到 hidden state，形状从 [B, T] 变成 [B, T, n_embd]。这一步在 RoPE 之前，不是直接加位置向量。",
+        ("embedding", "token id", "hidden", "查表", "整数", "下标", "词表"),
+        "一个 token ID 就是词表里的整数下标。模型先拿它去查 embedding 表，得到一条 hidden 向量，形状从 [B, T] 变成 [B, T, n_embd]。这一步只做离散到连续的查找，还没有乘位置向量。位置是后面 RoPE 在 Q、K 上旋进去的。如果词表和 embedding 行数对不上，这里会直接错位，所以 Tokenizer 训完要和这张表对齐。",
     ),
     (
-        ("rope", "旋转", "位置编码", "外推"),
-        "RoPE 不是把位置向量加到 hidden 上，而是对 Q 和 K 按二维子空间用 cos/sin 做旋转，相对角度能保住，所以外推比绝对位置加法更稳。我没改成 ALiBi。",
+        ("rope", "旋转", "位置编码", "外推", "cos", "sin"),
+        "位置编码我用的是 RoPE，不是把绝对位置向量加到 hidden 上。做法是把 Q、K 按偶数维两两一组，用该位置的 cos、sin 做二维旋转，相对位置差会进点积。这样外推比可学习绝对位置稳一些。我旋的是 Q 和 K，不旋 V。MiniMind 这条线和 LLaMA 一样，我没改成 ALiBi，也没有另做长度插值实验，这是明确边界。",
     ),
     (
-        ("rms", "norm", "归一"),
-        "RMSNorm 不做均值中心化，只除以 RMS 再乘可学习的 gamma，比 LayerNorm 少一个减均值，收敛更稳。我承认没做完整的对照表。",
+        ("rms", "norm", "归一", "均值"),
+        "归一化我用 RMSNorm：不算通道均值，只算均方根，hidden 除以 RMS 再乘可学习的 gamma。比 LayerNorm 少一次减均值，实现更短，也是 LLaMA 系常见选择。我把它放在注意力和 FFN 前面。我承认没有在同一套数据上把 LayerNorm 和 RMSNorm 做成完整对照表，结论主要来自复现和训练是否收敛。",
     ),
     (
-        ("swiglu", "激活", "门控", "relu", "gelu"),
-        "SwiGLU 是门控：silu(xW_gate) 乘上 xW_up，再经 W_down，不是普通 ReLU/GELU。我按 LLaMA 这条线复现，没有另做 MoE。",
+        ("swiglu", "激活", "门控", "relu", "gelu", "ffn"),
+        "FFN 不是一层 ReLU/GELU，而是 SwiGLU：一路 SiLU(xW_gate) 做门，一路 xW_up，两者按元素相乘，再经 W_down 投回去。门控能压掉一部分通道，比固定激活更灵活。这是跟着 LLaMA 复现的，没有上 MoE。参数量会比单层 FFN 多一截，小模型上我用缩小隐层来换。",
     ),
     (
-        ("tokenizer", "词表", "分词"),
-        "Tokenizer 是在中文语料上训出来的分词器，预训练做 next-token。这是小模型复现，训练闭环是 Pretrain → SFT → DPO。",
+        ("attention", "qkv", "头", "缩放", "softmax", "因果", "mask"),
+        "注意力是因果自注意力。hidden 先投成 Q、K、V，按头切开；score 是 QK^T 除以根号 d_k，再加下三角 mask，softmax 后乘 V，最后拼回去做输出投影。除根号 d_k 是怕点积随维度变大、softmax 变尖。训练时整段并行，推理才靠 KV cache 逐步追加。我没做 GQA，就是常规 MHA。",
     ),
     (
-        ("sft", "dpo", "对齐", "指令", "偏好"),
-        "SFT 用指令模板，损失主要打在回答 token 上；DPO 用偏好对、对照参考策略。边界是没有上 PPO/GRPO，也没有检索链路。",
+        ("tokenizer", "分词", "bpe", "语料"),
+        "Tokenizer 是我在中文语料上自己训的，不是直接拿一个英文 BPE 硬套。预训练目标就是 next-token，所以词表覆盖和切分粒度会直接进损失。指令阶段会套 Prompt 模板，但分词器本身没换。脏数据、超长样本会在进训之前截断或丢掉。我没有做 byte-level 回退的完整评测，这是缺口。",
+    ),
+    (
+        ("sft", "指令", "模板", "微调"),
+        "SFT 我用中文指令数据，套固定模板，损失主要打在回答 token 上，提示部分 mask 掉，避免模型只会复读指令。数据是自己清洗过的，不是把网上问答原样倒进去。这一步只解决「听得懂指令」，不解决偏好对齐。我没做多轮对话的复杂系统提示，模板比较短，这是有意收的范围。",
+    ),
+    (
+        ("dpo", "对齐", "偏好", "参考"),
+        "对齐我走 DPO，不用 PPO。一对偏好样本里，chosen 相对 rejected 提高对数几率，同时用参考策略约束别跑太远。这样不用另训 reward model，也不用在线采样。边界很清楚：没有 KL 系数扫、没有 GRPO，也没有人类实时标注。数据量小，我只验证指令是否更听，不宣称通用对齐。",
+    ),
+    (
+        ("预训练", "pretrain", "损失", "next"),
+        "预训练就是标准的因果语言建模：当前 token 预测下一个，损失是词表上的交叉熵。数据是清洗后的中文文本，和后面 SFT 的指令数据分开。小模型上我先把这条损失压稳，再接到指令微调，没有在预训练里混大量对话。也没有做 MoE 或超长上下文扩展。",
+    ),
+    (
+        ("共享", "复用", "转置", "logits", "tying", "输出层", "同一张"),
+        "输出层我做了 weight tying：LM head 和 embedding 共用一张词表矩阵的转置，hidden 映到 logits 时不再另训一套 vocab×hidden。参数少，输入输出空间也更齐。代价是改 embedding 会牵动输出，两边一起动。我没有独立训输出头，也没有在 tying 和独立头之间做对照。",
     ),
 ]
 EXCELLENT_FALLBACK = (
-    "我按自己项目里的对象接着讲：这一步要能落到张量和训练闭环上。"
-    "输入侧是 embedding 查表，位置用 RoPE 旋 Q/K，层内是 RMSNorm 和 SwiGLU，"
-    "训练是 Tokenizer 之后 Pretrain、SFT、DPO。我只复现轻量链路，承认没做检索和大规模集群。"
+    "我还是贴着 MiniMind 自己的对象讲。结构上是 Decoder-only：embedding 查表、"
+    "RoPE 只旋 Q/K、层内 RMSNorm 加 SwiGLU，输出和 embedding 做 weight tying。"
+    "训练闭环是 Tokenizer 之后预训练 next-token，再 SFT 只打回答 token，最后 DPO 用偏好对。"
+    "我明确没做检索、rerank 和万卡集群，这些不在仓库里，也不该拿来充项目。"
 )
 WEAK_ANSWERS = [
     "用了 RoPE 提升外推，公式我一下子写不出来。",

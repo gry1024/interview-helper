@@ -61,7 +61,7 @@ def test_append_turn_bundle_keeps_full_text_and_can_switch_direction(
         {"id": "d3", "title": "数据", "goal": "问清数据质量验证"},
     ]
     thought = "评价：把输入到注意力讲清楚了。\n查代码：否\n本方向结束：是，因为 goal 已走完。"
-    next_question = "预训练和 SFT 之间，损失和数据分别怎么接？"
+    next_question = "预训练和 SFT 之间，损失怎么接？"
     db.create_session(
         session_id="session-2",
         github_url="https://github.com/owner/repo",

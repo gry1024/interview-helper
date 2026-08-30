@@ -5,22 +5,25 @@ from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 import json
 import logging
+import math
 from pathlib import Path
 import re
 from time import monotonic
 from typing import Any, AsyncIterator
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Request, status
+from fastapi import FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.agent import plan_directions, run_turn, write_report
 from app.db import (
+    append_help,
     append_turn_bundle,
     create_session,
     get_session,
     init_db,
+    list_helps,
     list_turns,
     save_review_and_end_session,
 )
@@ -31,8 +34,10 @@ from app.models import (
     DirectionPlan,
     SessionCreate,
     SessionCreated,
+    TeacherHintCreate,
     TurnCreate,
 )
+from app.teacher import write_teacher_hint
 from app.tools.code_exercise import format_submission_answer, get_exercise
 from app.report import dump_end_snapshot
 from app.repository import (
@@ -141,6 +146,19 @@ def is_graduate_targeted(sample: dict[str, Any]) -> bool:
     return bool(_GRAD_REQUIRE_TEXT.search(blob))
 
 
+def is_xiaohongshu_sample(sample: dict[str, Any]) -> bool:
+    blob = f"{sample.get('source_name', '')} {sample.get('source_url', '')}".lower()
+    return "小红书" in blob or "xiaohongshu" in blob or "xhslink" in blob
+
+
+def _library_sort_key(sample: dict[str, Any]) -> tuple[int, str, str]:
+    return (
+        0 if is_xiaohongshu_sample(sample) else 1,
+        str(sample.get("captured_at") or sample.get("published_at") or ""),
+        str(sample.get("id") or sample.get("source_url") or ""),
+    )
+
+
 def publish_library() -> dict[str, list[dict[str, Any]]]:
     """Split by kind and hide graduate-only posts for the undergrad audience."""
 
@@ -153,6 +171,8 @@ def publish_library() -> dict[str, list[dict[str, Any]]]:
                 buckets["interviews"].append(sample)
             else:
                 buckets["jds"].append(sample)
+    buckets["jds"].sort(key=_library_sort_key)
+    buckets["interviews"].sort(key=_library_sort_key)
     return buckets
 
 
@@ -427,6 +447,62 @@ async def submit_code(
     )
 
 
+@app.post("/api/sessions/{session_id}/hints")
+async def create_hint(
+    session_id: str,
+    payload: TeacherHintCreate,
+    request: Request,
+) -> dict[str, Any]:
+    """Ask the teacher for a side hint. Does not consume the interview turn."""
+
+    _enforce_write_rate_limit(request)
+    session = _require_live_session(
+        await asyncio.to_thread(get_session, session_id),
+        session_id,
+    )
+    turns = await asyncio.to_thread(list_turns, session_id)
+    try:
+        result, bundle = await asyncio.to_thread(
+            write_teacher_hint,
+            session=session,
+            turns=turns,
+            question=payload.question,
+        )
+    except LLMError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="老师暂时无法给出提示，请稍后重试",
+        ) from exc
+
+    inspect_public = None
+    for event in bundle.get("events") or []:
+        if event.get("name") == "code_inspect":
+            inspect_public = event.get("result")
+    record = await asyncio.to_thread(
+        append_help,
+        session_id=session_id,
+        question=(payload.question or "").strip()
+        or next(
+            (
+                turn["body"]
+                for turn in reversed(turns)
+                if turn.get("role") == "interviewer"
+            ),
+            "",
+        ),
+        hint=result.hint,
+        looked_at_code=result.looked_at_code,
+        inspect_public=inspect_public,
+        direction_id=session.get("current_direction_id"),
+    )
+    return {
+        "id": record["id"],
+        "hint": result.hint,
+        "looked_at_code": result.looked_at_code,
+        "question": record["question"],
+    }
+
+
 @app.post("/api/sessions/{session_id}/end")
 async def end_session(session_id: str, request: Request) -> StreamingResponse:
     """Generate the end report, freeze the snapshot, and mark the session ended."""
@@ -452,13 +528,15 @@ async def end_session(session_id: str, request: Request) -> StreamingResponse:
         try:
             yield ": preparing-report\n\n"
             turns = await asyncio.to_thread(list_turns, session_id)
+            helps = await asyncio.to_thread(list_helps, session_id)
             try:
                 report_text, tool_bundle = await asyncio.to_thread(
                     write_report,
                     session,
                     turns,
+                    helps,
                 )
-                snapshot_json = dump_end_snapshot(session, turns, report_text)
+                snapshot_json = dump_end_snapshot(session, turns, report_text, helps)
                 await asyncio.to_thread(
                     save_review_and_end_session,
                     session_id=session_id,

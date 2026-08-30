@@ -11,3 +11,7 @@ venv/
 repos/
 *.pyc
 .DS_Store
+tools/Spider_XHS/
+tools/**/.env
+tools/**/cookies*
+*.cookie

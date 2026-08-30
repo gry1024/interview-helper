@@ -113,7 +113,7 @@ def test_end_endpoint_streams_report_then_forbids_turns(
     report_text = _sample_report()
     public = "仓库未体现 rerank / 万卡，价值仍在训练闭环。"
 
-    def fake_write_report(session, turns):
+    def fake_write_report(session, turns, helps=None):
         assert session["id"] == "session-end-sse"
         assert turns[1]["body"].startswith("用了 RoPE")
         return (

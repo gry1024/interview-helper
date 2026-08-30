@@ -70,7 +70,7 @@ COMPLETE_D3 = (
 )
 
 
-def _history(direction_id: str, answer: str, user_turns: int = 3) -> list[dict]:
+def _history(direction_id: str, answer: str, user_turns: int = 5) -> list[dict]:
     turns = [
         {
             "role": "interviewer",
@@ -222,8 +222,8 @@ def test_run_turn_overrides_model_skip_on_shallow_answer(monkeypatch) -> None:
     )
     assert result.direction_done is False
     assert next_id == "d1"
-    assert tools["events"] == []
-    assert tools["meta"] == []
+    assert all(event["name"] == "search_library" for event in tools["events"])
+    assert all(item["name"] == "search_library" for item in tools["meta"])
 
 
 def test_run_turn_keeps_direction_after_first_complete_answer(monkeypatch) -> None:
@@ -248,7 +248,7 @@ def test_run_turn_keeps_direction_after_first_complete_answer(monkeypatch) -> No
     assert result.direction_done is False
     assert next_id == "d1"
     assert "不要跳到别的方向" in result.next_question
-    assert tools["events"] == []
+    assert all(event["name"] == "search_library" for event in tools["events"])
 
 
 def test_run_turn_switches_after_enough_complete_answers(monkeypatch) -> None:
@@ -266,7 +266,7 @@ def test_run_turn_switches_after_enough_complete_answers(monkeypatch) -> None:
     )
     assert result.direction_done is True
     assert next_id == "d2"
-    assert tools["events"] == []
+    assert all(event["name"] == "search_library" for event in tools["events"])
 
 
 def test_apply_topic_lock_stays_when_goal_checkpoints_are_missing() -> None:
@@ -412,7 +412,7 @@ def test_turn_result_rejects_filename_line_in_next_question() -> None:
 
 
 def test_turn_result_allows_a_longer_but_single_next_question() -> None:
-    question = "整数 token 先要变成向量才能算，这个映射表叫什么，参数是学出来的吗？" * 3
+    question = "整数 token 先变成向量时，这个映射表的参数是学出来的吗？"
     result = TurnResult.model_validate(
         {
             "thought": "评价：仍停在术语层。\n查代码：否\n本方向结束：否，因为 embedding 还没问到。",
@@ -421,6 +421,26 @@ def test_turn_result_allows_a_longer_but_single_next_question() -> None:
         }
     )
     assert result.next_question == question
+
+
+def test_turn_result_rejects_piled_or_double_next_question() -> None:
+    from pydantic import ValidationError
+
+    for question in (
+        "QKV 分别来自哪？缩放又为什么除根号 d_k？",
+        "请分别讲清 QKV 来源以及 scaled 的原因？",
+    ):
+        try:
+            TurnResult.model_validate(
+                {
+                    "thought": "评价：虚。\n查代码：否\n本方向结束：否，因为还在当前方向。",
+                    "direction_done": False,
+                    "next_question": question,
+                }
+            )
+        except ValidationError:
+            continue
+        raise AssertionError(f"broad question must be rejected: {question}")
 
 
 def test_ended_session_cannot_continue_turns(

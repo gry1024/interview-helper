@@ -16,6 +16,9 @@ CODE_COORDINATE = re.compile(
 BROAD_FIRST_QUESTION = re.compile(
     r"完整|整体|全流程|每一步|全部|详细介绍|系统讲|哪几步|分别|以及|同时|还是"
 )
+BROAD_TURN_QUESTION = re.compile(
+    r"完整|整体|全流程|每一步|全部|详细介绍|系统讲|哪几步|分别|以及|同时|还是|请介绍"
+)
 
 
 def _validate_user_text(value: str, field_name: str) -> str:
@@ -87,6 +90,23 @@ class SessionCreated(BaseModel):
     clone_error: str | None
 
 
+class TeacherHintResult(BaseModel):
+    hint: str = Field(min_length=8, max_length=800)
+    looked_at_code: bool = False
+
+    @field_validator("hint")
+    @classmethod
+    def validate_hint(cls, value: str) -> str:
+        cleaned = _validate_user_text(value, "老师提示")
+        if CODE_COORDINATE.search(cleaned):
+            raise ValueError("老师提示不能包含代码文件名或行号")
+        return cleaned
+
+
+class TeacherHintCreate(BaseModel):
+    question: str | None = Field(default=None, max_length=400)
+
+
 class TurnCreate(BaseModel):
     answer: str = Field(min_length=1, max_length=8000)
 
@@ -114,7 +134,7 @@ class CodeSubmissionCreate(BaseModel):
 class TurnResult(BaseModel):
     thought: str = Field(min_length=8, max_length=4000)
     direction_done: bool
-    next_question: str = Field(min_length=4, max_length=360)
+    next_question: str = Field(min_length=4, max_length=160)
 
     @field_validator("thought", "next_question")
     @classmethod
@@ -127,6 +147,9 @@ class TurnResult(BaseModel):
         cleaned = _validate_user_text(value, "下一问")
         if CODE_COORDINATE.search(cleaned):
             raise ValueError("下一问不能包含代码文件名或行号")
+        question_marks = cleaned.count("？") + cleaned.count("?")
+        if question_marks > 1 or BROAD_TURN_QUESTION.search(cleaned):
+            raise ValueError("下一问必须只问一个微步骤")
         return cleaned
 
     @model_validator(mode="after")
