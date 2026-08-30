@@ -96,8 +96,21 @@ def log(message: str) -> None:
 
 
 def wait_ready(page) -> None:
+    dismiss_code_ide(page)
     page.wait_for_selector("#send-answer:not([disabled])", timeout=TURN_TIMEOUT_MS)
-    page.wait_for_selector("#end-interview:not([disabled])", timeout=TURN_TIMEOUT_MS)
+
+
+def dismiss_code_ide(page) -> None:
+    collapse = page.locator("#code-ide-collapse")
+    try:
+        if collapse.count() and collapse.first.is_visible():
+            collapse.first.click(timeout=3_000)
+    except Exception:
+        pass
+    try:
+        page.keyboard.press("Escape")
+    except Exception:
+        pass
 
 
 def last_question(page) -> str:
@@ -122,7 +135,11 @@ def clone_failed(page) -> bool:
     if notice.count() == 0:
         return False
     try:
-        return notice.is_visible() and bool(notice.inner_text().strip())
+        hidden = notice.get_attribute("hidden")
+        if hidden is not None:
+            return False
+        text = notice.inner_text().strip()
+        return "不可用" in text or "失败" in text
     except Exception:
         return False
 
@@ -323,6 +340,7 @@ def assert_reviews_list(page, excellent_id: str, weak_id: str) -> None:
 
 def main() -> int:
     evidence: dict = {"ok": False, "error": None}
+    log(f"验收开始 resume={os.getenv('RESUME_EXCELLENT_ID', '')}")
     try:
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)

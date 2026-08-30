@@ -1,0 +1,27 @@
+{
+  "ok": true,
+  "excellent": {
+    "name": "优秀",
+    "session_id": "5a41eb13-6ef9-48e8-839e-5ea282c518c5",
+    "user_turns": 6,
+    "clone_ok": true,
+    "band": "懂但讲不出",
+    "report_excerpt": "## 总评\n\n整场主档：懂但讲不出\n\n本场仅在方向 d1 上走了 8 个回合（seq 0–18），但 6 个检查点里：**embedding 查表与维度 ✓**（seq 1：「token ID 先是词表里的整数下标，会去查 embedding 表，得到 hidden state，形状从 [B, T] 变成 [B, T, n_embd]」）、**RoPE 施加在 Q/K 上的二维子空间旋转 ✓**（seq 4：「对 Q 和 K 按二维子空间用 cos/sin 做旋转，相对角度能保住」）、**RMSNorm 公式（去掉均值、只除 RMS）✓**（seq 10：「RMSNorm 不做均值中心化，只除以 RMS 再乘可学习的 gamma」）、**SwiGLU 公式（silu·gate × up → down）✓**（seq 13：「SwiGLU 是门控：silu(xW_gate) 乘上 xW_up，再经 W_down」）、**输出到 vocab logits + weight tying ✓**（seq 7：「LM head 和 embedding 共用同一张表的转置」）。表面看 5/6 命中，但深层落差点同样严重，且呈现高度一致的「越追问越跳题」模式：\n\n1. **RMSNorm 放置位置被连续跳过两轮**：seq 10 我问「是 pre-norm 还是 post-norm、残差走在哪里之前」，他只给了公式、承认「没做完整的对照表」；seq 12 我换「更土的说法」再压一次，他直接跳过去答 SwiGLU（seq 13）。换说法仍空白。\n2. **SwiGLU 与 ReLU/GELU 的对比被连续跳过两轮**：seq 15 我要他展开 silu 非单调性、梯度形态、多一组 W_gate 的取舍，他跳到 tokenizer 和训练闭环（seq 16：「Tokenizer 是在中文语料上训出来的分词器，预训练做 next-token」）；seq 18 再换说法追一次。这是典型的换说法仍空白。\n3. **RoPE 频率/基的具体生成被跳过**：seq 6 问到 d_head 切组、θ_i 与 base=10000 的关系，他跳到 weight tying（seq 7）。\n4. **因果 mask 整个未触及**：本场没问到，本方向即结束。\n\n学生能给出组件名与最简公式，但每次追问",
+    "inspected": true,
+    "inspect_has_falsify": true,
+    "after_claim_question": "",
+    "next_q_has_coord": false
+  },
+  "weak": {
+    "name": "一般较差",
+    "session_id": "f956e559-6137-4d5a-84c6-0590b71d0f37",
+    "user_turns": 6,
+    "clone_ok": true,
+    "band": "真不懂",
+    "report_excerpt": "## 总评\n\n整场主档：真不懂\n\n整场 d1 的 7 个检查点（Tokenizer、嵌入、RoPE、RMSNorm、因果自注意力 Q/K/V、SwiGLU FFN、残差与 logits）在 6 轮追问中几乎全部空白，且出现两轮跑题与一轮能力吹嘘，必须落「真不懂」。\n\n最关键的三个落差点：\n\n1. **Tokenizer 一站连续三轮空白**：第一问\"分词算法、词表规模依据、中文特殊 token\"被答成\"用了 RoPE 提升外推，公式我一下子写不出来\"（seq 1），第二次直接\"这块我不太懂\"（seq 3），第三次只回\"不太清楚，大概就是普通 Transformer 那样吧\"（seq 7）。仓库里明明有 `pretrain_t2t_mini.jsonl` 训练语料和 BPE+ByteLevel Tokenizer 训出来的词表，学生对自己项目里的实际数字一个都说不出来。\n\n2. **RoPE 旋转作用点挖不动**：学生自己把 RoPE 写进项目陈述里作为卖点，被问到\"旋转是作用在 token embedding 还是作用在 Q/K 上\"时，先甩出\"我还做了 rerank，并且在分布式万卡上做过大规模训练\"（seq 10）这种与仓库完全不符的说法（README 明确写\"3 块钱成本、3090 单卡\"），被按回后继续说\"你说的那个我还是不太懂\"（seq 13）。这是把自己项目陈述里的核心组件名都讲不出机制的典型表现。\n\n3. **RMSNorm 摆放位置答不出\"按论文做的\"**：被问到\"embedding 后立刻做 norm 还是第一个子层前做\"这种事实级问题，学生只回\"就是按论文做的，细节我没怎么看\"（seq 16），连 Pre-Norm 这一条仓库里实际写明的事都讲不出来。\n\n附带一处严重扣分：seq 10 的 rerank + 万卡分布式被 code_inspect 证伪（仓库只有单卡/单机多卡 DDP 与 ZeRO，没有检索链路也没有跨节点分布式），属于吹仓库对不上的能力，按较差样本定义锁死「真不懂」主档。\n\n## 岗位本质对照\n\n岗位本质（llm-algo 方向）要求候选人不只会复述架构，还能沿数据流解释机制与取舍、真正跑过训练闭环、对方法选择给出可验证理由、工程能力落到资源约束上。\n\n**项目声称已经覆盖**：预训练→SFT→DPO 全流程，RoPE / RM",
+    "inspected": true,
+    "inspect_has_falsify": true,
+    "after_claim_question": "先把你说的两件事放下：这个项目从头训一个小 LLaMA，没有检索链路，rerank 在这里没地方插；再说单机几张卡的玩具项目跟万卡分布式不是一个量级，别往那边扯。回到刚才那个 RoPE 的问题，我换个最笨的问法：你写的代码里，那个 cos 和 sin 的旋转矩阵，是在 embedding 查完之后马上乘上去，还是先走完线性投影拿到 Q 和 K 再乘？把你代码里这两行的位置说一下就行。",
+    "next_q_has_coord": false
+  }
+}
