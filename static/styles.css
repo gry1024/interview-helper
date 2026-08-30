@@ -413,6 +413,132 @@ textarea.input {
   min-height: 96px;
 }
 
+.main-content.ended-layout {
+  align-items: stretch;
+}
+
+.panel.has-ended-view {
+  max-width: none;
+}
+
+.ended-view {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 1px minmax(0, 1fr);
+  margin-top: 24px;
+  min-height: min(70vh, 720px);
+}
+
+.ended-view-divider {
+  background: var(--divider);
+}
+
+.ended-pane {
+  max-height: min(70vh, 720px);
+  min-height: 0;
+  overflow: auto;
+  padding: 0 20px;
+}
+
+.ended-pane-chat {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.report-article h2 {
+  font-family: var(--font-serif);
+  font-size: 22px;
+  font-weight: 500;
+  margin: 28px 0 12px;
+}
+
+.report-article h2:first-child,
+.report-article h3:first-child {
+  margin-top: 0;
+}
+
+.report-article h3 {
+  font-family: var(--font-serif);
+  font-size: 17px;
+  font-weight: 500;
+  margin: 20px 0 10px;
+}
+
+.report-article p,
+.report-article li {
+  color: var(--fg-secondary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.85;
+}
+
+.report-article p {
+  margin-bottom: 12px;
+}
+
+.report-article ul {
+  margin: 0 0 12px 1.2em;
+}
+
+.report-stream {
+  color: var(--fg-secondary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.8;
+  white-space: pre-wrap;
+}
+
+.report-tool-note {
+  color: var(--fg-tertiary);
+  font-family: var(--mono);
+  font-size: 12px;
+  margin-bottom: 12px;
+  white-space: pre-wrap;
+}
+
+.reviews-list {
+  margin-top: 48px;
+}
+
+.list-item {
+  background: transparent;
+  border-bottom: 1px solid var(--divider-subtle);
+  cursor: pointer;
+  display: block;
+  padding: 20px 0;
+  text-align: left;
+  transition: background 0.2s;
+  width: 100%;
+}
+
+.list-item:hover,
+.list-item:focus-visible {
+  background: var(--bg-hover);
+}
+
+.list-item:last-child {
+  border-bottom: none;
+}
+
+.list-item-meta {
+  color: var(--fg-tertiary);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+.list-item-preview {
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.7;
+  margin-top: 8px;
+}
+
+.review-detail {
+  margin-top: 32px;
+}
+
 .composer-actions {
   display: flex;
   flex-wrap: wrap;
@@ -645,6 +771,17 @@ textarea.input {
   .sample-heading {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .ended-view {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(36vh, 1fr) 1px minmax(36vh, 1fr);
+    min-height: 80vh;
+  }
+
+  .ended-pane {
+    max-height: 42vh;
+    padding: 12px 0;
   }
 }
 

@@ -11,8 +11,9 @@
       href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;400;500;600&display=swap"
       rel="stylesheet"
     >
-    <link rel="stylesheet" href="/styles.css?v=4">
-    <script src="/app.js?v=4" defer></script>
+    <link rel="stylesheet" href="/styles.css?v=5">
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
+    <script src="/app.js?v=5" defer></script>
   </head>
   <body>
     <div class="app-shell">
@@ -173,10 +174,7 @@
           <p class="eyebrow">面试复盘</p>
           <h1>每一次回答，都原样留下。</h1>
           <p class="lead">结束后将在这里查看完整对话、逐轮思考与综合报告。</p>
-          <div class="empty-state" role="status">
-            <span class="empty-symbol" aria-hidden="true">○</span>
-            <p>还没有面试记录</p>
-          </div>
+          <div id="reviews-root"></div>
         </section>
 
         <section
