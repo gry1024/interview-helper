@@ -674,6 +674,79 @@ def _stay_next_question(
     return last_resort or "那你项目里这一步实际怎么接？"
 
 
+def _content_tokens(text: str) -> list[str]:
+    tokens = re.findall(r"[A-Za-z][A-Za-z0-9_]{1,}|[\u4e00-\u9fff]{2,}", text or "")
+    skip = {
+        "怎样",
+        "如何",
+        "什么",
+        "怎么",
+        "这一",
+        "一下",
+        "之间",
+        "以及",
+        "还是",
+        "这个",
+        "那个",
+        "请把",
+        "接着",
+    }
+    return [token for token in tokens if token not in skip and len(token) >= 2]
+
+
+def _model_question_fits_current_direction(
+    question: str,
+    *,
+    direction: dict[str, str],
+    directions: list[dict[str, str]],
+    last_question: str,
+) -> bool:
+    """Keep a model follow-up only when it is not clearly the next direction."""
+
+    finished = _finish_oral_question(question)
+    if not finished or _looks_like_generic_stay(finished):
+        return False
+    if END_ADVOCACY_RE.search(finished):
+        return False
+    tokens = _content_tokens(finished)
+    if not tokens:
+        return False
+    current_blob = (
+        f"{last_question} {direction.get('title') or ''} {direction.get('goal') or ''}"
+    ).lower()
+    current_hits = sum(1 for token in tokens if token.lower() in current_blob)
+    for other in directions:
+        if other.get("id") == direction.get("id"):
+            continue
+        other_blob = f"{other.get('title') or ''} {other.get('goal') or ''}".lower()
+        other_hits = sum(1 for token in tokens if token.lower() in other_blob)
+        if other_hits > current_hits:
+            return False
+    return True
+
+
+def _lock_stay_question(
+    *,
+    model_question: str,
+    direction: dict[str, str],
+    directions: list[dict[str, str]],
+    answer: str,
+    last_question: str,
+) -> str:
+    if _model_question_fits_current_direction(
+        model_question,
+        direction=direction,
+        directions=directions,
+        last_question=last_question,
+    ):
+        kept = _finish_oral_question(model_question) or model_question.strip()
+        if kept and kept != (last_question or "").strip():
+            return kept[:240]
+    return _stay_next_question(
+        direction, answer, last_question=last_question, avoid=last_question
+    )
+
+
 def _dedupe_stay_question(
     question: str,
     *,
@@ -1343,17 +1416,17 @@ def run_turn(
                 turns, current_direction_id, answers
             ),
         )
-        kept = _dedupe_stay_question(
-            result.next_question,
-            direction=current_direction,
-            answer=answer,
-            last_question=last_question,
-        )
         result = result.model_copy(
             update={
                 "direction_done": False,
                 "thought": _rewrite_direction_open(result.thought, reason),
-                "next_question": kept,
+                "next_question": _lock_stay_question(
+                    model_question=result.next_question,
+                    direction=current_direction,
+                    directions=directions,
+                    answer=answer,
+                    last_question=last_question,
+                ),
             }
         )
     elif END_ADVOCACY_RE.search(result.next_question):
