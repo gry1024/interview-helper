@@ -16,6 +16,18 @@ const turnStatus = document.querySelector("#turn-status");
 const reviewsRoot = document.querySelector("#reviews-root");
 const interviewPanel = document.querySelector("#panel-interview");
 const reviewsPanel = document.querySelector("#panel-reviews");
+const liveWorkspace = document.querySelector("#live-workspace");
+const codeIde = document.querySelector("#code-ide");
+const codeIdeTitle = document.querySelector("#code-ide-title");
+const codeIdePrompt = document.querySelector("#code-ide-prompt");
+const codeIdeKicker = document.querySelector("#code-ide-kicker");
+const codeIdeMeta = document.querySelector("#code-ide-meta");
+const codeIdeStatus = document.querySelector("#code-ide-status");
+const codeIdeCollapsedText = document.querySelector("#code-ide-collapsed-text");
+const monacoHost = document.querySelector("#monaco-editor");
+const submitCodeButton = document.querySelector("#submit-code");
+const codeIdeExpand = document.querySelector("#code-ide-expand");
+const codeIdeCollapse = document.querySelector("#code-ide-collapse");
 const ROLE_LABELS = {
   "llm-algo": "LLM 算法实习",
   training: "大模型训练与对齐",
@@ -27,6 +39,20 @@ let libraryCache = null;
 let libraryKind = "jd";
 let turnInFlight = false;
 let endingInFlight = false;
+let monacoLoadPromise = null;
+let monacoEditor = null;
+let monacoWorkerUrl = "";
+let monacoCommandBound = false;
+let ideOpenSeq = 0;
+let codeExerciseState = null;
+let codeSubmitting = false;
+const MONACO_CDNS = [
+  "https://registry.npmmirror.com/monaco-editor/0.52.2/files/min",
+  "https://cdn.jsdelivr.net/npm/monaco-editor@0.52.2/min",
+];
+const MOCK_SESSION_ID = "mock-session";
+const CHAT_PLACEHOLDER_DEFAULT = "回答当前问题";
+const CHAT_PLACEHOLDER_WITH_IDE = "写代码时也可以问面试官语法或 API";
 const REPORT_SECTIONS = [
   { key: "overview", label: "总评", aliases: ["总评", "综合评价", "整体评价"] },
   {
@@ -399,6 +425,10 @@ function setComposerEnabled(enabled) {
   }
   if (answerInput) {
     answerInput.disabled = !enabled;
+    answerInput.placeholder =
+      enabled && isCodeExerciseActive()
+        ? CHAT_PLACEHOLDER_WITH_IDE
+        : CHAT_PLACEHOLDER_DEFAULT;
   }
   if (sendAnswerButton) {
     sendAnswerButton.disabled = !enabled;
@@ -406,6 +436,581 @@ function setComposerEnabled(enabled) {
   }
   if (endInterviewButton) {
     endInterviewButton.disabled = !enabled;
+  }
+}
+
+function isMockSession() {
+  return interviewLive?.dataset.sessionId === MOCK_SESSION_ID;
+}
+
+function isCodeExerciseOpen() {
+  return Boolean(codeExerciseState && codeIde && !codeIde.hidden);
+}
+
+function isCodeExerciseActive() {
+  return isCodeExerciseOpen() && !codeExerciseState?.submitted;
+}
+
+function setIdeLayoutOpen(open) {
+  liveWorkspace?.classList.toggle("has-code-ide", open);
+  interviewPanel?.classList.toggle("has-code-ide", open);
+  document.querySelector(".main-content")?.classList.toggle("has-code-ide", open);
+}
+
+function syncIdeChrome() {
+  const submitted = Boolean(codeExerciseState?.submitted);
+  const collapsed = Boolean(codeIde?.classList.contains("is-collapsed"));
+  if (codeIdeCollapse) {
+    codeIdeCollapse.classList.toggle("is-visible", submitted && !collapsed);
+    codeIdeCollapse.hidden = !(submitted && !collapsed);
+  }
+  if (answerInput && !answerInput.disabled) {
+    answerInput.placeholder = isCodeExerciseActive()
+      ? CHAT_PLACEHOLDER_WITH_IDE
+      : CHAT_PLACEHOLDER_DEFAULT;
+  }
+}
+
+function closeCodeExercise(options = {}) {
+  codeExerciseState = null;
+  if (codeIde) {
+    codeIde.hidden = true;
+    codeIde.classList.remove("is-collapsed", "is-readonly");
+    delete codeIde.dataset.ready;
+  }
+  setIdeLayoutOpen(false);
+  if (codeIdeStatus) {
+    codeIdeStatus.replaceChildren();
+  }
+  if (answerInput && !answerInput.disabled) {
+    answerInput.placeholder = CHAT_PLACEHOLDER_DEFAULT;
+  }
+  if (options.dispose && monacoEditor) {
+    monacoEditor.dispose();
+    monacoEditor = null;
+    monacoCommandBound = false;
+  }
+}
+
+function collapseCodeExercise() {
+  if (!codeIde || !codeExerciseState) {
+    return;
+  }
+  codeIde.classList.add("is-collapsed");
+  if (codeIdeCollapsedText) {
+    codeIdeCollapsedText.textContent = `已提交 · ${codeExerciseState.title || "手撕代码"}`;
+  }
+  syncIdeChrome();
+}
+
+function expandCodeExercise() {
+  if (!codeIde) {
+    return;
+  }
+  codeIde.classList.remove("is-collapsed");
+  syncIdeChrome();
+  window.requestAnimationFrame(() => {
+    monacoEditor?.layout();
+  });
+}
+
+function asExercisePayload(value) {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const title = fieldText(value.title).trim();
+  const prompt = fieldText(
+    value.prompt || value.description || value.question,
+  ).trim();
+  const starter = fieldText(
+    value.starter || value.starter_code || value.code || "",
+  );
+  const exerciseId = fieldText(value.exercise_id || value.id || "").trim();
+  if (!title && !prompt && !starter && !exerciseId) {
+    return null;
+  }
+  return {
+    exercise_id: exerciseId,
+    title: title || "手撕代码",
+    prompt: prompt || "请在编辑器中完成这道题。",
+    language: fieldText(value.language || "python").trim() || "python",
+    starter,
+  };
+}
+
+function extractCodeExercise(eventName, data) {
+  if (eventName === "code_exercise") {
+    return asExercisePayload(data);
+  }
+  const name = fieldText(data?.name).trim();
+  if (eventName !== "tool" || name !== "code_exercise") {
+    return null;
+  }
+  const fromResultString = () => {
+    if (typeof data.result !== "string" || !data.result.trim()) {
+      return null;
+    }
+    try {
+      return asExercisePayload(JSON.parse(data.result));
+    } catch {
+      return null;
+    }
+  };
+  return (
+    asExercisePayload(data) ||
+    asExercisePayload(data.args) ||
+    asExercisePayload(data.input) ||
+    asExercisePayload(typeof data.result === "object" ? data.result : null) ||
+    fromResultString()
+  );
+}
+
+function configureMonacoEnvironment(cdn) {
+  if (monacoWorkerUrl) {
+    URL.revokeObjectURL(monacoWorkerUrl);
+    monacoWorkerUrl = "";
+  }
+  const source = `
+      self.MonacoEnvironment = { baseUrl: "${cdn}/" };
+      importScripts("${cdn}/vs/base/worker/workerMain.js");
+    `;
+  monacoWorkerUrl = URL.createObjectURL(
+    new Blob([source], { type: "text/javascript" }),
+  );
+  window.MonacoEnvironment = {
+    getWorkerUrl() {
+      return monacoWorkerUrl;
+    },
+  };
+}
+
+function injectMonacoLoader(cdn) {
+  return new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = `${cdn}/vs/loader.js`;
+    script.dataset.monacoLoader = "";
+    script.async = true;
+    script.onload = () => resolve();
+    script.onerror = () => reject(new Error("Monaco 加载器下载失败"));
+    document.head.append(script);
+  });
+}
+
+function waitForEditorMain(amdRequire, cdn) {
+  return new Promise((resolve, reject) => {
+    if (typeof amdRequire.config === "function") {
+      amdRequire.config({
+        paths: { vs: `${cdn}/vs` },
+      });
+    }
+    const timer = window.setTimeout(() => {
+      reject(new Error("Monaco 加载超时"));
+    }, 45000);
+    amdRequire(["vs/editor/editor.main"], () => {
+      window.clearTimeout(timer);
+      if (!window.monaco?.editor) {
+        reject(new Error("Monaco 初始化失败"));
+        return;
+      }
+      resolve();
+    });
+  });
+}
+
+function loadMonaco() {
+  if (window.monaco?.editor) {
+    return Promise.resolve(window.monaco);
+  }
+  if (monacoLoadPromise) {
+    return monacoLoadPromise;
+  }
+  monacoLoadPromise = (async () => {
+    let lastError = new Error("Monaco 加载失败");
+    for (const cdn of MONACO_CDNS) {
+      try {
+        if (typeof window.require !== "function") {
+          window.require = { paths: { vs: `${cdn}/vs` } };
+          await injectMonacoLoader(cdn);
+        }
+        configureMonacoEnvironment(cdn);
+        const amdRequire = window.require;
+        if (typeof amdRequire !== "function") {
+          throw new Error("Monaco 加载器未就绪");
+        }
+        await waitForEditorMain(amdRequire, cdn);
+        return window.monaco;
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    throw lastError;
+  })();
+  monacoLoadPromise.catch(() => {
+    monacoLoadPromise = null;
+  });
+  return monacoLoadPromise;
+}
+
+function ensureMonacoTheme(monaco) {
+  monaco.editor.defineTheme("interview-ide", {
+    base: "vs-dark",
+    inherit: true,
+    rules: [
+      { token: "keyword", foreground: "4FC1FF", fontStyle: "bold" },
+      { token: "keyword.python", foreground: "4FC1FF", fontStyle: "bold" },
+      { token: "string", foreground: "CE9178" },
+      { token: "comment", foreground: "6A9955" },
+      { token: "number", foreground: "B5CEA8" },
+    ],
+    colors: {
+      "editor.background": "#1E1E1E",
+      "editor.foreground": "#E8E8E8",
+      "editorLineNumber.foreground": "#8B8B8B",
+      "editorLineNumber.activeForeground": "#F2F2F2",
+      "editor.lineHighlightBackground": "#2A2A2A",
+      "editorCursor.foreground": "#FFFFFF",
+      "editor.selectionBackground": "#264F78",
+      "editorIndentGuide.background": "#3B3B3B",
+      "editorIndentGuide.activeBackground": "#707070",
+    },
+  });
+}
+
+function updateCodeMeta() {
+  if (!codeIdeMeta || !monacoEditor) {
+    return;
+  }
+  const model = monacoEditor.getModel();
+  const position = monacoEditor.getPosition();
+  const value = model ? model.getValue() : "";
+  const lines = model ? model.getLineCount() : 0;
+  const suffix = codeExerciseState?.submitted ? " · 已提交只读" : "";
+  codeIdeMeta.textContent = `Ln ${position?.lineNumber || 1}, Col ${position?.column || 1}  ·  ${lines} 行  ·  ${value.length} 字符  ·  4 空格  ·  UTF-8  ·  Python${suffix}`;
+}
+
+function getEditorCode() {
+  return monacoEditor?.getValue() ?? codeExerciseState?.starter ?? "";
+}
+
+async function openCodeExercise(raw) {
+  const exercise = asExercisePayload(raw);
+  if (!exercise || !codeIde || !monacoHost) {
+    return;
+  }
+  if (
+    monacoEditor &&
+    codeExerciseState &&
+    !codeExerciseState.submitted &&
+    exercise.exercise_id &&
+    codeExerciseState.exercise_id === exercise.exercise_id
+  ) {
+    codeIde.hidden = false;
+    setIdeLayoutOpen(true);
+    codeIde.dataset.ready = "1";
+    return;
+  }
+  const seq = ++ideOpenSeq;
+  codeExerciseState = {
+    ...exercise,
+    submitted: false,
+    fallbackSubmit: false,
+  };
+  codeIde.hidden = false;
+  codeIde.classList.remove("is-collapsed", "is-readonly");
+  delete codeIde.dataset.ready;
+  setIdeLayoutOpen(true);
+  if (codeIdeTitle) {
+    codeIdeTitle.textContent = codeExerciseState.title;
+  }
+  if (codeIdePrompt) {
+    codeIdePrompt.textContent = codeExerciseState.prompt;
+  }
+  if (codeIdeKicker) {
+    const languageLabel =
+      codeExerciseState.language.toLowerCase() === "python"
+        ? "Python"
+        : codeExerciseState.language;
+    codeIdeKicker.textContent = `手撕代码 · ${languageLabel}`;
+  }
+  if (submitCodeButton) {
+    submitCodeButton.disabled = false;
+    submitCodeButton.textContent = "提交代码";
+  }
+  if (codeIdeStatus) {
+    codeIdeStatus.replaceChildren();
+  }
+  syncIdeChrome();
+  if (!monacoEditor) {
+    monacoHost.classList.add("is-loading");
+    monacoHost.textContent = "正在加载代码编辑器";
+  }
+
+  try {
+    const monaco = await loadMonaco();
+    if (seq !== ideOpenSeq) {
+      return;
+    }
+    ensureMonacoTheme(monaco);
+    const language =
+      codeExerciseState.language.toLowerCase() === "python"
+        ? "python"
+        : "plaintext";
+    if (!monacoEditor) {
+      monacoHost.classList.remove("is-loading");
+      monacoHost.replaceChildren();
+      monacoEditor = monaco.editor.create(monacoHost, {
+        value: codeExerciseState.starter,
+        language,
+        theme: "interview-ide",
+        automaticLayout: true,
+        fontSize: 15,
+        lineHeight: 24,
+        letterSpacing: 0.2,
+        fontLigatures: true,
+        fontFamily:
+          'ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace',
+        lineNumbers: "on",
+        renderLineHighlight: "all",
+        roundedSelection: false,
+        scrollBeyondLastLine: false,
+        minimap: { enabled: false },
+        tabSize: 4,
+        insertSpaces: true,
+        detectIndentation: false,
+        autoClosingBrackets: "always",
+        autoClosingQuotes: "always",
+        autoClosingDelete: "always",
+        autoSurround: "languageDefined",
+        matchBrackets: "always",
+        autoIndent: "full",
+        formatOnType: true,
+        wrappingIndent: "indent",
+        wordWrap: "on",
+        padding: { top: 12, bottom: 12 },
+        glyphMargin: false,
+        folding: true,
+        renderWhitespace: "selection",
+        mouseWheelZoom: true,
+        smoothScrolling: true,
+        cursorBlinking: "smooth",
+        bracketPairColorization: { enabled: true },
+        guides: { bracketPairs: true, indentation: true },
+        suggestOnTriggerCharacters: true,
+        quickSuggestions: { other: true, comments: false, strings: false },
+        acceptSuggestionOnEnter: "on",
+        tabCompletion: "on",
+        ariaLabel: "Python 代码编辑器",
+      });
+      monacoEditor.onDidChangeCursorPosition(updateCodeMeta);
+      monacoEditor.onDidChangeModelContent(updateCodeMeta);
+    } else {
+      const model = monacoEditor.getModel();
+      if (model) {
+        monaco.editor.setModelLanguage(model, language);
+        model.setValue(codeExerciseState.starter);
+      }
+    }
+    monacoEditor.updateOptions({ readOnly: false });
+    if (!monacoCommandBound) {
+      monacoEditor.addCommand(
+        monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter,
+        () => {
+          void submitCodeExercise();
+        },
+      );
+      monacoCommandBound = true;
+    }
+    window.requestAnimationFrame(() => {
+      monacoEditor?.layout();
+    });
+    updateCodeMeta();
+    codeIde.dataset.ready = "1";
+    if (document.activeElement !== answerInput) {
+      monacoEditor.focus();
+    }
+  } catch (error) {
+    console.error("Failed to open Monaco editor", error);
+    monacoHost.classList.remove("is-loading");
+    if (codeIdeStatus) {
+      codeIdeStatus.replaceChildren(
+        createTextElement(
+          "p",
+          "flash error",
+          "编辑器加载失败，请检查网络后刷新重试。",
+        ),
+      );
+    }
+  }
+}
+
+function appendCodeSubmissionBubble(code, options) {
+  const fallback = Boolean(options?.fallback);
+  const block = document.createElement("div");
+  block.className = "user-block";
+
+  const row = document.createElement("div");
+  row.className = "bubble-row user";
+  const bubble = document.createElement("div");
+  bubble.className = "bubble code-submit-bubble";
+  bubble.append(
+    createTextElement(
+      "p",
+      "code-submit-badge",
+      fallback ? "代码提交（经对话通道）" : "代码提交",
+    ),
+  );
+  const preview = document.createElement("pre");
+  preview.className = "code-submit-preview";
+  preview.textContent = code;
+  bubble.append(preview);
+  row.append(bubble);
+
+  const thought = document.createElement("div");
+  thought.className = "thought";
+  thought.hidden = true;
+  block.append(row, thought);
+  chatLog.append(block);
+  chatLog.scrollTop = chatLog.scrollHeight;
+  return thought;
+}
+
+function markCodeSubmitted(fallback) {
+  if (!codeExerciseState) {
+    return;
+  }
+  codeExerciseState.submitted = true;
+  codeExerciseState.fallbackSubmit = fallback;
+  monacoEditor?.updateOptions({ readOnly: true });
+  codeIde?.classList.add("is-readonly");
+  if (submitCodeButton) {
+    submitCodeButton.disabled = true;
+    submitCodeButton.textContent = "已提交";
+  }
+  updateCodeMeta();
+  collapseCodeExercise();
+}
+
+async function consumeCodeSubmissionResponse(response, thoughtNode) {
+  const contentType = response.headers.get("content-type") || "";
+  if (contentType.includes("application/json")) {
+    const data = await response.json().catch(() => ({}));
+    const nextQuestion = data.question || data.text || data.next_question;
+    if (nextQuestion) {
+      appendInterviewerBubble(
+        nextQuestion,
+        data.direction_id || interviewLive.dataset.currentDirectionId,
+      );
+    }
+    return;
+  }
+  const turn = await consumeTurnStream(response, thoughtNode);
+  if (turn.question) {
+    appendInterviewerBubble(turn.question, turn.directionId);
+  }
+}
+
+async function submitCodeExercise() {
+  if (
+    !codeExerciseState ||
+    codeExerciseState.submitted ||
+    codeSubmitting ||
+    turnInFlight ||
+    endingInFlight ||
+    sessionHasEnded()
+  ) {
+    return;
+  }
+  const sessionId = interviewLive?.dataset.sessionId;
+  const code = getEditorCode();
+  if (!sessionId) {
+    return;
+  }
+  if (!code.trim()) {
+    codeIdeStatus?.replaceChildren(
+      createTextElement("p", "flash error", "请先在编辑器中写下代码再提交。"),
+    );
+    return;
+  }
+
+  codeSubmitting = true;
+  if (submitCodeButton) {
+    submitCodeButton.disabled = true;
+  }
+  setTurnLoading(true);
+  codeIdeStatus?.replaceChildren();
+
+  if (isMockSession()) {
+    const thoughtNode = appendCodeSubmissionBubble(code, { fallback: true });
+    thoughtNode.hidden = false;
+    thoughtNode.textContent = "本地 mock：提交接口未调用，面试可继续。";
+    markCodeSubmitted(true);
+    appendInterviewerBubble(
+      "代码已收到。可以说一下你为什么先减最大值再做归一化吗？",
+      interviewLive.dataset.currentDirectionId || "d1",
+    );
+    codeSubmitting = false;
+    setTurnLoading(false);
+    answerInput?.focus();
+    return;
+  }
+
+  try {
+    let fallback = false;
+    let response = await fetch(`/api/sessions/${sessionId}/code-submissions`, {
+      method: "POST",
+      headers: {
+        Accept: "text/event-stream",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        exercise_id: codeExerciseState.exercise_id,
+        code,
+      }),
+    });
+
+    if (response.status === 404 || response.status === 405) {
+      fallback = true;
+      response = await fetch(`/api/sessions/${sessionId}/turns`, {
+        method: "POST",
+        headers: {
+          Accept: "text/event-stream",
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          answer: `【代码提交】${
+            codeExerciseState.exercise_id
+              ? ` exercise_id=${codeExerciseState.exercise_id}`
+              : ""
+          }\n\n${code}`,
+        }),
+      });
+    }
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(apiErrorMessage(data, "代码提交失败，请稍后重试。"));
+    }
+
+    const thoughtNode = appendCodeSubmissionBubble(code, { fallback });
+    markCodeSubmitted(fallback);
+    await consumeCodeSubmissionResponse(response, thoughtNode);
+    codeSubmitting = false;
+    setTurnLoading(false);
+    answerInput?.focus();
+  } catch (error) {
+    console.error("Failed to submit code exercise", error);
+    codeSubmitting = false;
+    if (submitCodeButton && !codeExerciseState?.submitted) {
+      submitCodeButton.disabled = false;
+    }
+    setTurnLoading(false);
+    codeIdeStatus?.replaceChildren(
+      createTextElement(
+        "p",
+        "flash error",
+        error instanceof Error ? error.message : "代码提交失败，请稍后重试。",
+      ),
+    );
   }
 }
 
@@ -462,15 +1067,34 @@ function renderStartedSession(session) {
     answerInput.value = "";
   }
   interviewLive.dataset.ended = "";
+  closeCodeExercise({ dispose: true });
   setComposerEnabled(true);
   setTurnLoading(false);
   interviewStart.hidden = true;
   interviewLive.hidden = false;
   interviewLive.focus({ preventScroll: true });
   interviewLive.scrollIntoView({ behavior: "smooth", block: "start" });
+  if (session.code_exercise) {
+    void openCodeExercise(session.code_exercise);
+  }
 }
 
 function applySseEvent(eventName, data, thoughtNode, state) {
+  const exercise = extractCodeExercise(eventName, data);
+  if (eventName === "code_exercise" || fieldText(data?.name).trim() === "code_exercise") {
+    if (exercise) {
+      state.receivedExercise = true;
+      void openCodeExercise(exercise);
+    } else if (isCodeExerciseOpen()) {
+      state.receivedExercise = true;
+    }
+    if (eventName === "tool" && thoughtNode && data.result) {
+      thoughtNode.hidden = false;
+      thoughtNode.textContent += `${sanitizeThought(data.result)}\n`;
+      chatLog.scrollTop = chatLog.scrollHeight;
+    }
+    return;
+  }
   if (eventName === "thought_delta") {
     thoughtNode.hidden = false;
     thoughtNode.textContent += sanitizeThought(data.text || "");
@@ -547,6 +1171,7 @@ async function consumeTurnStream(response, thoughtNode) {
     question: "",
     directionId: interviewLive.dataset.currentDirectionId || "d1",
     directionDone: false,
+    receivedExercise: false,
   };
   await consumeSse(response, (eventName, data) => {
     applySseEvent(eventName, data, thoughtNode, state);
@@ -571,6 +1196,18 @@ async function submitTurn(event) {
 
   const thoughtNode = appendUserBlock(answer);
   answerInput.value = "";
+
+  if (isMockSession()) {
+    thoughtNode.hidden = false;
+    thoughtNode.textContent = "本地 mock：对话未请求后端。";
+    appendInterviewerBubble(
+      "可以边写边问。Python 列表推导、math.exp 都可以用；注意溢出时先减去最大值。",
+      interviewLive.dataset.currentDirectionId || "d1",
+    );
+    answerInput.focus();
+    return;
+  }
+
   setTurnLoading(true);
 
   try {
@@ -588,10 +1225,12 @@ async function submitTurn(event) {
     }
 
     const turn = await consumeTurnStream(response, thoughtNode);
-    if (!turn.question) {
+    if (!turn.question && !turn.receivedExercise && !isCodeExerciseOpen()) {
       throw new Error("未收到下一问，请稍后重试。");
     }
-    appendInterviewerBubble(turn.question, turn.directionId);
+    if (turn.question) {
+      appendInterviewerBubble(turn.question, turn.directionId);
+    }
     setTurnLoading(false);
     answerInput.focus();
   } catch (error) {
@@ -876,6 +1515,7 @@ function ensureEndedShell() {
   reportPane.id = "ended-report-stream";
   endedView.append(chatPane, divider, reportPane);
   chatLog.replaceWith(endedView);
+  closeCodeExercise({ dispose: true });
   markInterviewPanelEnded();
   setComposerEnabled(false);
   return endedView;
@@ -1132,6 +1772,15 @@ chatForm?.addEventListener("submit", submitTurn);
 endInterviewButton?.addEventListener("click", () => {
   void submitEndInterview();
 });
+submitCodeButton?.addEventListener("click", () => {
+  void submitCodeExercise();
+});
+codeIdeExpand?.addEventListener("click", () => {
+  expandCodeExercise();
+});
+codeIdeCollapse?.addEventListener("click", () => {
+  collapseCodeExercise();
+});
 document.querySelectorAll(".kind-btn").forEach((button) => {
   button.addEventListener("click", () => {
     setLibraryKind(button.dataset.kind);
@@ -1142,3 +1791,49 @@ document.addEventListener("keydown", (event) => {
     closeLibraryModal();
   }
 });
+
+function bootMockCodeExercise() {
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("mock_code") !== "1") {
+    return;
+  }
+  renderStartedSession({
+    id: MOCK_SESSION_ID,
+    directions: [
+      {
+        id: "d1",
+        title: "手撕代码",
+        goal: "在编辑器完成题目，同时可向面试官提问。",
+      },
+      { id: "d2", title: "实现核对", goal: "提交后继续追问实现细节。" },
+      { id: "d3", title: "岗位对照", goal: "对照岗位能力评估实现。" },
+    ],
+    first_question: "先在编辑器里完成这道题。写的时候可以直接问我语法或 API。",
+    clone_ok: true,
+    code_exercise: {
+      exercise_id: "mock-softmax",
+      title: "实现 Softmax",
+      prompt:
+        "实现 Softmax.__call__(xs)，输入 list[float]，返回归一化后的概率。请使用数值稳定写法：先减最大值再 exp。写的时候可以问我语法。",
+      language: "python",
+      starter:
+        "class Softmax:\n    def __init__(self):\n        pass\n\n    def __call__(self, xs):\n        # TODO: 数值稳定的 softmax\n        return xs\n",
+    },
+  });
+}
+
+window.__interviewHelper = {
+  openCodeExercise,
+  extractCodeExercise,
+  getEditor() {
+    return monacoEditor;
+  },
+  getCode() {
+    return getEditorCode();
+  },
+  tokenizePython(code) {
+    return window.monaco?.editor.tokenize(code, "python") || [];
+  },
+};
+
+bootMockCodeExercise();

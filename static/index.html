@@ -11,9 +11,11 @@
       href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;400;500;600&display=swap"
       rel="stylesheet"
     >
-    <link rel="stylesheet" href="/styles.css?v=8">
+    <link rel="preconnect" href="https://registry.npmmirror.com">
+    <link rel="preconnect" href="https://cdn.jsdelivr.net">
+    <link rel="stylesheet" href="/styles.css?v=10">
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
-    <script src="/app.js?v=8" defer></script>
+    <script src="/app.js?v=10" defer></script>
   </head>
   <body>
     <div class="app-shell">
@@ -140,29 +142,67 @@
             </section>
             <p class="clone-notice" id="clone-notice" hidden></p>
 
-            <div class="chat-shell">
-              <div class="chat-log" id="chat-log" aria-live="polite"></div>
-              <form class="chat-composer" id="chat-form">
-                <label class="sr-only" for="answer-input">你的回答</label>
-                <textarea
-                  class="input"
-                  id="answer-input"
-                  name="answer"
-                  rows="3"
-                  maxlength="8000"
-                  placeholder="回答当前问题"
-                  required
-                ></textarea>
-                <div class="composer-actions">
-                  <button class="btn btn-primary" id="send-answer" type="submit">
-                    发送
-                  </button>
-                  <button class="btn" id="end-interview" type="button" disabled>
-                    结束面试
-                  </button>
+            <div class="live-workspace" id="live-workspace">
+              <div class="chat-shell">
+                <div class="chat-log" id="chat-log" aria-live="polite"></div>
+                <form class="chat-composer" id="chat-form">
+                  <label class="sr-only" for="answer-input">你的回答</label>
+                  <textarea
+                    class="input"
+                    id="answer-input"
+                    name="answer"
+                    rows="3"
+                    maxlength="8000"
+                    placeholder="回答当前问题"
+                    required
+                  ></textarea>
+                  <div class="composer-actions">
+                    <button class="btn btn-primary" id="send-answer" type="submit">
+                      发送
+                    </button>
+                    <button class="btn" id="end-interview" type="button" disabled>
+                      结束面试
+                    </button>
+                  </div>
+                  <div id="turn-status" aria-live="polite"></div>
+                </form>
+              </div>
+
+              <aside class="code-ide" id="code-ide" hidden aria-label="手撕代码编辑器">
+                <div class="code-ide-collapsed-bar" id="code-ide-collapsed-bar">
+                  <p class="code-ide-collapsed-text" id="code-ide-collapsed-text">已提交手撕代码</p>
+                  <button class="btn" id="code-ide-expand" type="button">查看已提交代码</button>
                 </div>
-                <div id="turn-status" aria-live="polite"></div>
-              </form>
+                <div class="code-ide-main" id="code-ide-main">
+                  <header class="code-ide-header">
+                    <div class="code-ide-heading-row">
+                      <div class="code-ide-heading">
+                        <p class="code-ide-kicker" id="code-ide-kicker">手撕代码 · Python</p>
+                        <h3 class="code-ide-title" id="code-ide-title"></h3>
+                      </div>
+                      <button class="btn" id="code-ide-collapse" type="button" hidden>
+                        收起
+                      </button>
+                    </div>
+                    <p class="code-ide-prompt" id="code-ide-prompt"></p>
+                  </header>
+                  <div
+                    class="code-ide-editor"
+                    id="monaco-editor"
+                    role="application"
+                    aria-label="Python 代码编辑器"
+                  ></div>
+                  <footer class="code-ide-footer">
+                    <p class="code-ide-meta" id="code-ide-meta">Python · 4 空格 · UTF-8</p>
+                    <div class="code-ide-actions">
+                      <div class="code-ide-status" id="code-ide-status" aria-live="polite"></div>
+                      <button class="btn btn-primary" id="submit-code" type="button">
+                        提交代码
+                      </button>
+                    </div>
+                  </footer>
+                </div>
+              </aside>
             </div>
           </div>
         </section>
