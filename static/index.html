@@ -11,8 +11,8 @@
       href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;400;500;600&display=swap"
       rel="stylesheet"
     >
-    <link rel="stylesheet" href="/styles.css?v=2">
-    <script src="/app.js?v=2" defer></script>
+    <link rel="stylesheet" href="/styles.css?v=4">
+    <script src="/app.js?v=4" defer></script>
   </head>
   <body>
     <div class="app-shell">
@@ -133,11 +133,32 @@
               <h2 id="directions-title">接下来会沿这些链路逐步深挖</h2>
               <ol class="direction-list" id="direction-list"></ol>
             </section>
-            <section class="first-question" aria-labelledby="first-question-title">
-              <p class="section-label" id="first-question-title">面试官</p>
-              <p id="first-question"></p>
-            </section>
             <p class="clone-notice" id="clone-notice" hidden></p>
+
+            <div class="chat-shell">
+              <div class="chat-log" id="chat-log" aria-live="polite"></div>
+              <form class="chat-composer" id="chat-form">
+                <label class="sr-only" for="answer-input">你的回答</label>
+                <textarea
+                  class="input"
+                  id="answer-input"
+                  name="answer"
+                  rows="3"
+                  maxlength="8000"
+                  placeholder="回答当前问题"
+                  required
+                ></textarea>
+                <div class="composer-actions">
+                  <button class="btn btn-primary" id="send-answer" type="submit">
+                    发送
+                  </button>
+                  <button class="btn" id="end-interview" type="button" disabled>
+                    结束面试
+                  </button>
+                </div>
+                <div id="turn-status" aria-live="polite"></div>
+              </form>
+            </div>
           </div>
         </section>
 
