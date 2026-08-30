@@ -409,6 +409,10 @@ textarea.input {
   gap: 12px;
 }
 
+.chat-composer[hidden] {
+  display: none;
+}
+
 .chat-composer textarea.input {
   min-height: 96px;
 }
