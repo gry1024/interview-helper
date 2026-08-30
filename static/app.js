@@ -34,7 +34,7 @@ const ROLE_LABELS = {
   agent: "Agent 应用实习",
   rag: "RAG / AI 搜索实习",
 };
-const DEMO_CATALOG_URL = "/demo-projects.json?v=25";
+const DEMO_CATALOG_URL = "/demo-projects.json?v=26";
 const KNOWN_TOOL_NAMES = new Set([
   "search_library",
   "code_inspect",
@@ -1920,11 +1920,11 @@ function renderMarkdown(text) {
       if (/^###\s+/.test(trimmed)) {
         return `<h3>${trimmed.replace(/^###\s+/, "").replace(/\n/g, "<br>")}</h3>`;
       }
-      if (/^[-*]\s/m.test(trimmed)) {
+      if (/^\s*[-*]\s/m.test(trimmed)) {
         const items = trimmed
           .split("\n")
-          .filter((line) => /^[-*]\s/.test(line))
-          .map((line) => `<li>${line.replace(/^[-*]\s+/, "")}</li>`)
+          .filter((line) => /^\s*[-*]\s/.test(line))
+          .map((line) => `<li>${line.replace(/^\s*[-*]\s+/, "")}</li>`)
           .join("");
         return `<ul>${items}</ul>`;
       }
