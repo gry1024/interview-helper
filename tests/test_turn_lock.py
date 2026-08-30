@@ -224,6 +224,8 @@ def test_run_turn_overrides_model_skip_on_shallow_answer(monkeypatch) -> None:
     assert next_id == "d1"
     assert all(event["name"] == "search_library" for event in tools["events"])
     assert all(item["name"] == "search_library" for item in tools["meta"])
+    assert "检索面经：" not in result.thought
+    assert "条真实问法" not in result.thought
 
 
 def test_run_turn_keeps_direction_after_first_complete_answer(monkeypatch) -> None:
@@ -331,6 +333,8 @@ def test_turns_endpoint_streams_required_sse_events(
     assert "event: done" in body
     assert "event: error" not in body
     assert "RoPE 具体旋转的是哪一部分？" in body
+    thought_events = [part for part in body.split("\n\n") if "event: thought_delta" in part]
+    assert len(thought_events) >= 2
 
 
 def test_turns_endpoint_can_stream_tool_events(
@@ -392,6 +396,69 @@ def test_turns_endpoint_can_stream_tool_events(
     thought = next(item for item in turns if item["role"] == "thought")
     assert thought["meta"][0]["name"] == "code_inspect"
     assert "internal_excerpt" in thought["meta"][0]["result"]
+
+
+def test_turns_endpoint_emits_tool_start_before_thought(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "app.db")
+    db.init_db()
+    _seed_session("session-sse-progress")
+    main_mod._write_requests.clear()
+    main_mod._active_turns.clear()
+
+    fake = TurnResult.model_validate(
+        _model_turn(direction_done=False, next_question="RoPE 具体旋转的是哪一部分？")
+    )
+
+    def _fake_run_turn(**kwargs):
+        on_progress = kwargs.get("on_progress")
+        event = {
+            "name": "search_library",
+            "args": {"query": "RoPE"},
+            "result": "检索到 5 条面经",
+        }
+        if on_progress:
+            on_progress({"kind": "tool_start", "name": "search_library"})
+            on_progress({"kind": "tool", "event": event})
+            on_progress({"kind": "thought_delta", "text": "评价：先看机制。\n"})
+            on_progress({"kind": "thought_delta", "text": "查代码：否\n"})
+            on_progress({"kind": "thought_delta", "text": "本方向结束：否"})
+        return fake, "d1", {"events": [event], "meta": [event]}
+
+    monkeypatch.setattr("app.main.run_turn", _fake_run_turn)
+
+    with TestClient(main_mod.app) as client:
+        response = client.post(
+            "/api/sessions/session-sse-progress/turns",
+            json={"answer": "用了 RoPE 提升外推"},
+        )
+
+    assert response.status_code == 200
+    body = response.text
+    assert "event: tool_start" in body
+    assert "正在调用检索面经工具" in body
+    assert "检索到 5 条面经" in body
+    start_at = body.find("event: tool_start")
+    thought_at = body.find("event: thought_delta")
+    question_at = body.find("event: question")
+    assert 0 <= start_at < thought_at < question_at
+    assert body.count("检索到 5 条面经") == 1
+    assert "检索面经：项目总览" not in body
+    assert "查代码：是（search_library）" not in body
+
+
+def test_turn_result_allows_torch_compile_in_next_question() -> None:
+    question = "那你跟 torch.compile 比，手写 Triton 的延迟你怎么权衡？"
+    result = TurnResult.model_validate(
+        {
+            "thought": "评价：还停在收益数字。\n查代码：否\n本方向结束：否，因为融合 kernel 还没问完。",
+            "direction_done": False,
+            "next_question": question,
+        }
+    )
+    assert result.next_question == question
 
 
 def test_turn_result_rejects_filename_line_in_next_question() -> None:

@@ -59,6 +59,19 @@ def validate_github_url(value: str) -> str:
     return f"https://github.com/{owner}/{repository_name}{suffix}"
 
 
+def _clone_source_urls(validated_url: str) -> list[str]:
+    """Official GitHub first, then a reachable China mirror if GitHub times out."""
+
+    parsed = urlsplit(validated_url)
+    path = parsed.path.lstrip("/")
+    if not path.endswith(".git"):
+        path = f"{path}.git"
+    return [
+        validated_url,
+        f"https://gitclone.com/github.com/{path}",
+    ]
+
+
 def _directory_size_bytes(path: Path) -> int:
     total = 0
     for root, directories, filenames in os.walk(path, followlinks=False):
@@ -89,37 +102,49 @@ def clone_repository(github_url: str, session_id: str) -> CloneResult:
         return CloneResult(None, False, "仓库目标目录无效")
 
     cleanup_session_repo(session_id)
-    command = [
-        "git",
-        "clone",
-        "--depth",
-        "1",
-        "--single-branch",
-        "--no-tags",
-        validated_url,
-        str(target),
-    ]
+    last_error = "仓库无法克隆，代码核对暂不可用"
     environment = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
-
-    try:
-        completed = subprocess.run(
-            command,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=settings.clone_timeout_sec,
-            env=environment,
+    sources = _clone_source_urls(validated_url)
+    for index, clone_url in enumerate(sources):
+        command = [
+            "git",
+            "clone",
+            "--depth",
+            "1",
+            "--single-branch",
+            "--no-tags",
+            clone_url,
+            str(target),
+        ]
+        # Official GitHub is often unreachable from this host; fail over quickly.
+        timeout_sec = (
+            min(20, settings.clone_timeout_sec) if index == 0 and len(sources) > 1
+            else settings.clone_timeout_sec
         )
-    except subprocess.TimeoutExpired:
-        cleanup_session_repo(session_id)
-        return CloneResult(None, False, "仓库准备超时，代码核对暂不可用")
-    except OSError:
-        cleanup_session_repo(session_id)
-        return CloneResult(None, False, "仓库准备失败，代码核对暂不可用")
+        try:
+            completed = subprocess.run(
+                command,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=timeout_sec,
+                env=environment,
+            )
+        except subprocess.TimeoutExpired:
+            cleanup_session_repo(session_id)
+            last_error = "仓库准备超时，代码核对暂不可用"
+            continue
+        except OSError:
+            cleanup_session_repo(session_id)
+            last_error = "仓库准备失败，代码核对暂不可用"
+            continue
 
-    if completed.returncode != 0:
+        if completed.returncode == 0:
+            break
         cleanup_session_repo(session_id)
-        return CloneResult(None, False, "仓库无法克隆，代码核对暂不可用")
+        last_error = "仓库无法克隆，代码核对暂不可用"
+    else:
+        return CloneResult(None, False, last_error)
 
     max_bytes = settings.clone_max_mb * 1024 * 1024
     if _directory_size_bytes(target) > max_bytes:

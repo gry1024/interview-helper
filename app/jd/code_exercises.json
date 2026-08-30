@@ -18,7 +18,7 @@
       "self-attention",
       "transformer"
     ],
-    "roles": ["llm-algo", "training", "rag"]
+    "roles": ["llm-algo", "rag", "agent"]
   },
   {
     "id": "scaled-dot-product",
@@ -37,7 +37,7 @@
       "softmax",
       "qkv"
     ],
-    "roles": ["llm-algo", "training", "rag"]
+    "roles": ["llm-algo", "rag", "agent"]
   },
   {
     "id": "causal-mask",
@@ -56,7 +56,7 @@
       "autoregressive",
       "attention"
     ],
-    "roles": ["llm-algo", "training"]
+    "roles": ["llm-algo"]
   },
   {
     "id": "kv-cache-step",
@@ -74,7 +74,7 @@
       "decode",
       "inference"
     ],
-    "roles": ["llm-algo", "training"]
+    "roles": ["llm-algo"]
   },
   {
     "id": "rope-apply",
@@ -92,7 +92,7 @@
       "position",
       "llama"
     ],
-    "roles": ["llm-algo", "training"]
+    "roles": ["llm-algo"]
   },
   {
     "id": "rmsnorm-forward",
@@ -109,7 +109,7 @@
       "norm",
       "llama"
     ],
-    "roles": ["llm-algo", "training"]
+    "roles": ["llm-algo"]
   },
   {
     "id": "swiglu-ffn",
@@ -127,7 +127,7 @@
       "llama",
       "mlp"
     ],
-    "roles": ["llm-algo", "training"]
+    "roles": ["llm-algo"]
   },
   {
     "id": "lora-linear",
@@ -148,7 +148,7 @@
       "finetune",
       "qlora"
     ],
-    "roles": ["llm-algo", "training", "rag"]
+    "roles": ["llm-algo", "rag", "agent"]
   },
   {
     "id": "tokenizer-bpe-merge",
@@ -167,7 +167,7 @@
       "encode",
       "embedding"
     ],
-    "roles": ["llm-algo", "training", "rag"]
+    "roles": ["llm-algo", "rag", "agent"]
   },
   {
     "id": "mqa-forward",
@@ -184,7 +184,7 @@
       "attention",
       "latency"
     ],
-    "roles": ["llm-algo", "training"]
+    "roles": ["llm-algo"]
   },
   {
     "id": "gqa-repeat-kv",
@@ -202,7 +202,7 @@
       "kv",
       "attention"
     ],
-    "roles": ["llm-algo", "training"]
+    "roles": ["llm-algo"]
   },
   {
     "id": "paged-kv-lookup",
@@ -220,7 +220,7 @@
       "block table",
       "kv"
     ],
-    "roles": ["llm-algo", "training"]
+    "roles": ["llm-algo"]
   },
   {
     "id": "softmax-stable",
@@ -238,6 +238,6 @@
       "stable",
       "attention"
     ],
-    "roles": ["llm-algo", "training", "rag"]
+    "roles": ["llm-algo", "rag", "agent"]
   }
 ]

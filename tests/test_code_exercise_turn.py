@@ -182,7 +182,7 @@ def test_run_turn_opens_catalog_exercise_not_invented(monkeypatch) -> None:
     assert event["payload"]["language"] == "python"
     assert "Multi-Head" in event["payload"]["title"]
     assert event["payload"]["starter"]
-    assert "已打开手撕题" in event["result"]
+    assert "已打开《" in event["result"]
     assert CODE_INSPECT_TOOL in completions.calls[0]["tools"]
     assert CODE_EXERCISE_TOOL in completions.calls[0]["tools"]
     from app.tools.search_library import SEARCH_LIBRARY_TOOL
@@ -220,7 +220,34 @@ def test_run_turn_rejects_invented_exercise_id(monkeypatch) -> None:
     assert "无法打开" in event["result"]
 
 
-def test_run_turn_forces_exercise_when_student_asks_to_write(monkeypatch) -> None:
+def test_looks_like_code_dump_and_forces_editor(monkeypatch) -> None:
+    from app.agent import looks_like_code_dump
+
+    oral = "我用了 RoPE，旋的是 Q 和 K，没有在对话框贴实现。"
+    assert looks_like_code_dump(oral) is False
+    dumped = (
+        "import torch\n"
+        "class MultiHeadAttention:\n"
+        "    def __init__(self, d_model, n_heads):\n"
+        "        self.d_model = d_model\n"
+        "    def forward(self, x):\n"
+        "        return x\n"
+        "def scaled_dot(q, k, v):\n"
+        "    return v\n"
+    )
+    assert looks_like_code_dump(dumped) is True
+    completions = _FakeCompletions(
+        [_FakeResponse(_FakeMessage(content=json.dumps(_legal_turn_json())))]
+    )
+    _install_client(monkeypatch, completions)
+    _result, _next_id, tools = run_turn(
+        session=_session(),
+        turns=[{"role": "interviewer", "body": "注意力怎么算？", "direction_id": "d1"}],
+        answer=dumped,
+    )
+    event = next(item for item in tools["events"] if item["name"] == "code_exercise")
+    assert event.get("payload")
+    assert event["payload"]["exercise_id"]
     completions = _FakeCompletions(
         [_FakeResponse(_FakeMessage(content=json.dumps(_legal_turn_json())))]
     )
@@ -236,7 +263,7 @@ def test_run_turn_forces_exercise_when_student_asks_to_write(monkeypatch) -> Non
     assert requested_code_exercise_args(answer="请打开手撕题") is not None
     event = next(item for item in tools["events"] if item["name"] == "code_exercise")
     assert event["payload"]["exercise_id"] == "rope-apply"
-    assert "已打开手撕题" in event["result"]
+    assert "已打开《" in event["result"]
 
 
 def test_run_turn_submission_does_not_offer_exercise_tool(monkeypatch) -> None:

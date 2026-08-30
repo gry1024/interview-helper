@@ -11,17 +11,13 @@ import re
 from typing import Any
 
 from app.review_models import ReviewSnapshot
+from app.roles import role_label
 
 
 APP_DIR = Path(__file__).resolve().parent
 REPORT_PROMPT_PATH = APP_DIR / "prompts" / "report.md"
 REVIEW_SNAPSHOT_SCHEMA_VERSION = 1
 STATEMENT_PREVIEW_LIMIT = 40
-ROLE_LABELS = {
-    "llm-algo": "LLM 算法实习",
-    "training": "大模型训练与对齐",
-    "rag": "RAG 与 Agent 应用",
-}
 REPORT_SECTION_TITLES = (
     "总评",
     "岗位本质对照",
@@ -125,7 +121,7 @@ def build_end_report_context(
 
     payload = {
         "role": session["role"],
-        "role_label": ROLE_LABELS.get(str(session["role"]), session["role"]),
+        "role_label": role_label(str(session["role"])),
         "statement": session["statement"],
         "directions": _as_directions(session),
         "current_direction_id": session.get("current_direction_id"),

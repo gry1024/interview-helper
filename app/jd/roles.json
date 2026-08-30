@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "decision": "库内原三角色为 llm-algo / training / rag。llm-algo 与 training 的样本 Jaccard=0.73，JD 几乎全部同时写基座与训练/对齐，故合并进 llm-algo。原 rag 把 Agent 与检索捆在一起，但 JD 标题大量是独立 AI Agent 岗（约 15～19 条），面经问法也不同，故拆成 agent 与 rag。Infra/推理框架仅约 3～4 条专职 JD、面经几乎没有，并入 llm-algo。",
+  "roles": [
+    {
+      "id": "llm-algo",
+      "label": "LLM 算法实习",
+      "one_liner": "基座机制、预训练到对齐闭环、推理约束",
+      "dropped_into_from": ["training"],
+      "title_terms": [
+        "大模型算法",
+        "llm",
+        "基座",
+        "transformer",
+        "预训练",
+        "后训练",
+        "对齐",
+        "post-train",
+        "pre-train"
+      ],
+      "body_terms": [
+        "transformer",
+        "rope",
+        "attention",
+        "rmsnorm",
+        "swiglu",
+        "sft",
+        "dpo",
+        "ppo",
+        "grpo",
+        "rlhf",
+        "lora",
+        "预训练",
+        "后训练",
+        "对齐",
+        "强化学习"
+      ]
+    },
+    {
+      "id": "agent",
+      "label": "Agent 应用实习",
+      "one_liner": "工具调用、任务规划、多智能体与失败兜底",
+      "split_from": "rag",
+      "title_terms": ["agent", "智能体", "harness"],
+      "body_terms": [
+        "agent",
+        "智能体",
+        "工具调用",
+        "function call",
+        "function-calling",
+        "multi-agent",
+        "planner",
+        "harness",
+        "mcp"
+      ]
+    },
+    {
+      "id": "rag",
+      "label": "RAG / AI 搜索实习",
+      "one_liner": "切片、召回、重排与知识库落地",
+      "title_terms": ["rag", "检索", "知识库", "ai搜索", "ai 搜索", "embedding"],
+      "body_terms": [
+        "rag",
+        "检索增强",
+        "chunk",
+        "rerank",
+        "召回",
+        "向量库",
+        "知识库",
+        "embedding"
+      ]
+    }
+  ]
+}

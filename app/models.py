@@ -1,23 +1,23 @@
 """Validated API and agent data models."""
 
 import re
-from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.repository import validate_github_url
+from app.roles import allowed_role_ids, is_allowed_role
 
 
 CONTROL_CHARACTERS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
 CODE_COORDINATE = re.compile(
-    r"(?:[\w./-]+\.(?:py|js|ts|tsx|java|go|rs|cpp|c|h))(?::\d+)?",
+    r"(?:[\w./-]+\.(?:tsx|ts|jsx|py|js|java|go|rs|cpp|cc|c|h))(?::\d+)?(?![A-Za-z0-9_])",
     re.IGNORECASE,
 )
 BROAD_FIRST_QUESTION = re.compile(
     r"完整|整体|全流程|每一步|全部|详细介绍|系统讲|哪几步|分别|以及|同时|还是"
 )
 BROAD_TURN_QUESTION = re.compile(
-    r"完整|整体|全流程|每一步|全部|详细介绍|系统讲|哪几步|分别|以及|同时|还是|请介绍"
+    r"完整|整体|全流程|每一步|全部|详细介绍|系统讲|哪几步|分别|请介绍"
 )
 
 
@@ -33,7 +33,7 @@ def _validate_user_text(value: str, field_name: str) -> str:
 class SessionCreate(BaseModel):
     github_url: str = Field(min_length=1, max_length=512)
     statement: str = Field(min_length=1, max_length=8000)
-    role: Literal["llm-algo", "training", "rag"]
+    role: str = Field(min_length=2, max_length=32)
 
     @field_validator("github_url")
     @classmethod
@@ -45,6 +45,15 @@ class SessionCreate(BaseModel):
     @classmethod
     def validate_statement(cls, value: str) -> str:
         return _validate_user_text(value, "项目陈述")
+
+    @field_validator("role")
+    @classmethod
+    def validate_role(cls, value: str) -> str:
+        cleaned = _validate_user_text(value, "岗位")
+        if not is_allowed_role(cleaned):
+            allowed = "、".join(allowed_role_ids())
+            raise ValueError(f"岗位必须是：{allowed}")
+        return cleaned
 
 
 class Direction(BaseModel):
@@ -134,7 +143,7 @@ class CodeSubmissionCreate(BaseModel):
 class TurnResult(BaseModel):
     thought: str = Field(min_length=8, max_length=4000)
     direction_done: bool
-    next_question: str = Field(min_length=4, max_length=160)
+    next_question: str = Field(min_length=4, max_length=240)
 
     @field_validator("thought", "next_question")
     @classmethod

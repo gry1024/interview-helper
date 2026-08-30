@@ -2,14 +2,14 @@
   "projects": [
     {
       "id": "minimind",
-      "label": "试用 MiniMind",
+      "label": "MiniMind",
       "github_url": "https://github.com/jingyaogong/minimind.git",
       "role": "llm-algo",
       "statement": "MiniMind:全链路轻量级大语言模型复现与训练：为深入探究LLM内部机制，复现了一个类LLaMA架构的轻量级语言模型 (Decoder-only)，涵盖从 Tokenizer训练、预训练(Pre-train)、指令微调(SFT)到DPO对齐的完整流水线。核心工作: 基于PyTorch复现了LLaMA的核心组件，包括RoPE旋转位置编码（提升外推性) RMSNorm(优化收敛速度)及SwiGLU激活函数， 深入掌握了 Transformer的底层计算细节。构建并清洗中文指令数据集，设计 Prompt Template，成功跑通了从无监督预训练到指令跟随的完整训练闭环。"
     },
     {
       "id": "nano-vllm",
-      "label": "试用 nano-vLLM",
+      "label": "nano-vLLM",
       "github_url": "https://github.com/GeeeekExplorer/nano-vllm.git",
       "role": "llm-algo",
       "statement": "基于 nano-vLLM 的推理引擎优化（Flash Attention, GQA）。技术栈：Triton、nano-vLLM、Qwen3-0.6B，覆盖算子融合、Chunked Prefill、FP8 量化、KV Cache、PagedAttention。基于 nano-vLLM 框架与 Qwen3-0.6B，从底层算子融合、上层调度策略及 KV Cache 量化压缩三个维度优化，攻克访存瓶颈，提升推理吞吐量与显存效率。\n\n大模型推理算子融合：基于 Triton 为 nano-vLLM 实现 Add+RMSNorm 和 SiluAndMul 的单 Pass 融合 Kernel，减少中间张量与冗余 HBM 访存。单算子有效带宽利用率由 torch.compile 的约 20% 提升至约 95%，单算子加速 4~5x；在 Qwen3-0.6B 上 eager 吞吐提升 6%~8%、P99 延迟降低 7%~12%、显存占用降低 7%。\n\nChunked Prefill 混合调度：原框架 Step 级 Prefill/Decode 互斥导致长 Prompt 阻塞在线 Decode。重构 Scheduler、ModelRunner 与推理主循环，Decode 严格优先、Token Budget 驱动的 Chunked Prefill；同一 Step 内优先 CUDAGraph 跑 Decode，剩余预算 eager 分片 Prefill，跨 Step 维护增量 KV。Qwen3-0.6B、256 并发、Chunk Size=1024 下，端到端吞吐 +4.6%，P99 步延迟 -36.1%，峰值显存 -3.0%。\n\nFP8 KV Cache 量化与 PA/FA Decode 算子重构：Triton 实现 FP8E4M3 KV Cache 在线量化写入，K 静态缩放、V 按 Token/KV Head 动态缩放，支持 Paged KV Cache、CUDAGraph Context Replay。重构 FP8 Paged Attention Decode Kernel，GQA 下 Batch×KV Head 共享 KV 加载（两 Query Head 共享一次 K/V 和 Scale），融合物理块寻址、分块计算、FP8 反量化和 Online Softmax。Prefill 走 Gather 反量化 + FlashAttention。Logits 级精度对齐前提下，KV Cache 容量约 2x，最大无抢占并发约 +108%，端到端吞吐约 +37%。"

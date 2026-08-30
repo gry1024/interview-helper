@@ -7,6 +7,7 @@ import json
 import logging
 import math
 from pathlib import Path
+import queue
 import re
 from time import monotonic
 from typing import Any, AsyncIterator
@@ -16,7 +17,7 @@ from fastapi import FastAPI, HTTPException, Query, Request, status
 from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.agent import plan_directions, run_turn, write_report
+from app.agent import plan_directions, run_turn, tool_start_payload, write_report
 from app.db import (
     append_help,
     append_turn_bundle,
@@ -39,7 +40,9 @@ from app.models import (
 )
 from app.teacher import write_teacher_hint
 from app.tools.code_exercise import format_submission_answer, get_exercise
+from app.interviewer_agent import build_interviewer_agent_payload
 from app.report import dump_end_snapshot
+from app.roles import is_allowed_role, list_roles
 from app.repository import (
     CloneResult,
     cleanup_session_repo,
@@ -56,6 +59,7 @@ RATE_WINDOW_SECONDS = 60
 _write_requests: defaultdict[str, deque[float]] = defaultdict(deque)
 _active_turns: set[str] = set()
 _THOUGHT_SPLIT = re.compile(r"(?<=[。！？\n])")
+_THOUGHT_SECTION = re.compile(r"(?=评价[:：]|查代码[:：]|本方向结束[:：])")
 _ISO_DATE = re.compile(r"^(\d{4}-\d{2}-\d{2})")
 _SLASH_DATE = re.compile(r"^(\d{4})/(\d{2})/(\d{2})")
 LIBRARY_DEFAULT_PAGE_SIZE = 9
@@ -81,6 +85,7 @@ async def disable_static_cache(request: Request, call_next):
         "/app.js",
         "/styles.css",
         "/demo-projects.json",
+        "/interviewer-agent-data.js",
     }:
         response.headers["Cache-Control"] = "no-store"
     return response
@@ -91,6 +96,34 @@ def health() -> dict[str, str]:
     """Return a small readiness response for local and public checks."""
 
     return {"status": "ok"}
+
+
+@app.get("/api/roles")
+def supported_roles() -> dict[str, Any]:
+    """Homepage dropdown and Agent page share this catalog."""
+
+    return {
+        "roles": [
+            {
+                "id": item["id"],
+                "label": item["label"],
+                "one_liner": item.get("one_liner") or "",
+            }
+            for item in list_roles()
+        ]
+    }
+
+
+@app.get("/api/interviewer-agent")
+def interviewer_agent(role: str | None = Query(default=None)) -> dict[str, Any]:
+    """Return interviewer prompts, tools, and runtime rules as used in code."""
+
+    if role and not is_allowed_role(role):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="不支持的岗位",
+        )
+    return build_interviewer_agent_payload(role)
 
 
 _GRAD_EDU_FIELD = re.compile(r"硕士|博士|master'?s?\b|ph\.?\s*d\.?", re.I)
@@ -409,6 +442,17 @@ def _chunk_thought(thought: str) -> list[str]:
     return pieces or [thought]
 
 
+def _chunk_thought_sections(thought: str) -> list[str]:
+    sections = [piece for piece in _THOUGHT_SECTION.split(thought) if piece.strip()]
+    if len(sections) > 1:
+        return sections
+    return _chunk_thought(thought)
+
+
+def _tool_name(event: dict[str, Any]) -> str:
+    return str(event.get("name") or "code_inspect")
+
+
 def _turn_sse_headers() -> dict[str, str]:
     return {
         "Cache-Control": "no-cache",
@@ -429,56 +473,142 @@ def _stream_run_turn(
     _active_turns.add(session_id)
 
     async def event_stream() -> AsyncIterator[str]:
-        try:
-            turns = await asyncio.to_thread(list_turns, session_id)
+        progress: queue.Queue[dict[str, Any]] = queue.Queue()
+        seen_tool_names: set[str] = set()
+        thought_parts: list[str] = []
+        live_thought: list[str] = []
+        tools_started = False
+
+        def on_progress(event: dict[str, Any]) -> None:
+            progress.put(event)
+
+        def worker() -> None:
             try:
-                result, next_direction_id, tool_bundle = await asyncio.to_thread(
-                    run_turn,
-                    session=session,
-                    turns=turns,
-                    answer=answer,
-                    allow_code_exercise=allow_code_exercise,
-                )
-            except LLMError:
-                yield _sse("error", {"message": "MiniMax 暂时无法继续追问，请稍后重试"})
-                yield _sse("done", {})
-                return
-            except Exception:
-                logger.exception("turn stream failed")
-                yield _sse("error", {"message": "本轮追问失败，请稍后重试"})
-                yield _sse("done", {})
-                return
+                turns = list_turns(session_id)
+                try:
+                    value = run_turn(
+                        session=session,
+                        turns=turns,
+                        answer=answer,
+                        allow_code_exercise=allow_code_exercise,
+                        on_progress=on_progress,
+                    )
+                except TypeError:
+                    value = run_turn(
+                        session=session,
+                        turns=turns,
+                        answer=answer,
+                        allow_code_exercise=allow_code_exercise,
+                    )
+                progress.put({"kind": "_done", "value": value})
+            except LLMError as exc:
+                progress.put({"kind": "_error", "llm": True, "error": exc})
+            except Exception as exc:
+                progress.put({"kind": "_error", "llm": False, "error": exc})
 
-            tool_events = tool_bundle.get("events") or []
-            tool_meta = tool_bundle.get("meta") or []
-            for chunk in _sse_tool_events(tool_events):
-                yield chunk
+        def leftover_tool_chunks(event: dict[str, Any]) -> list[str]:
+            name = _tool_name(event)
+            if name in seen_tool_names:
+                return []
+            seen_tool_names.add(name)
+            return _sse_tool_events([event])
 
-            for chunk in _chunk_thought(result.thought):
-                yield _sse("thought_delta", {"text": chunk})
-                await asyncio.sleep(0.02)
+        try:
+            yield ": thinking\n\n"
+            worker_task = asyncio.create_task(asyncio.to_thread(worker))
+            try:
+                while True:
+                    event = await asyncio.to_thread(progress.get)
+                    kind = event.get("kind")
+                    if kind == "tool_start":
+                        name = str(event.get("name") or "")
+                        tools_started = True
+                        if name and name not in seen_tool_names:
+                            yield _sse("tool_start", tool_start_payload(name))
+                            await asyncio.sleep(0)
+                        continue
+                    if kind == "tool":
+                        tools_started = True
+                        tool_event = event.get("event") or {}
+                        for chunk in leftover_tool_chunks(tool_event):
+                            yield chunk
+                            await asyncio.sleep(0)
+                        continue
+                    if kind == "thought_delta":
+                        text = str(event.get("text") or "")
+                        if not text:
+                            continue
+                        if seen_tool_names or tools_started:
+                            live_thought.append(text)
+                            yield _sse("thought_delta", {"text": text})
+                            await asyncio.sleep(0)
+                        else:
+                            thought_parts.append(text)
+                        continue
+                    if kind == "_error":
+                        if event.get("llm"):
+                            logger.warning(
+                                "turn stream LLMError",
+                                exc_info=event.get("error"),
+                            )
+                            yield _sse(
+                                "error",
+                                {"message": "MiniMax 暂时无法继续追问，请稍后重试"},
+                            )
+                        else:
+                            logger.exception(
+                                "turn stream failed",
+                                exc_info=event.get("error"),
+                            )
+                            yield _sse("error", {"message": "本轮追问失败，请稍后重试"})
+                        yield _sse("done", {})
+                        return
+                    if kind == "_done":
+                        result, next_direction_id, tool_bundle = event["value"]
+                        tool_events = tool_bundle.get("events") or []
+                        tool_meta = tool_bundle.get("meta") or []
+                        for tool_event in tool_events:
+                            for chunk in leftover_tool_chunks(tool_event):
+                                yield chunk
+                                await asyncio.sleep(0)
 
-            await asyncio.to_thread(
-                append_turn_bundle,
-                session_id=session_id,
-                user_answer=stored_answer if stored_answer is not None else answer,
-                thought=result.thought,
-                next_question=result.next_question,
-                direction_id=session["current_direction_id"],
-                next_direction_id=next_direction_id,
-                meta=tool_meta or None,
-                user_meta=user_meta,
-            )
+                        shown = "".join(live_thought)
+                        if shown:
+                            if result.thought.startswith(shown):
+                                extra = result.thought[len(shown) :]
+                                if extra:
+                                    yield _sse("thought_delta", {"text": extra})
+                                    await asyncio.sleep(0)
+                        else:
+                            for chunk in _chunk_thought_sections(result.thought):
+                                yield _sse("thought_delta", {"text": chunk})
+                                await asyncio.sleep(0.04)
 
-            yield _sse(
-                "question",
-                {
-                    "text": result.next_question,
-                    "direction_id": next_direction_id,
-                    "direction_done": result.direction_done,
-                },
-            )
-            yield _sse("done", {})
+                        await asyncio.to_thread(
+                            append_turn_bundle,
+                            session_id=session_id,
+                            user_answer=(
+                                stored_answer if stored_answer is not None else answer
+                            ),
+                            thought=result.thought,
+                            next_question=result.next_question,
+                            direction_id=session["current_direction_id"],
+                            next_direction_id=next_direction_id,
+                            meta=tool_meta or None,
+                            user_meta=user_meta,
+                        )
+                        yield _sse(
+                            "question",
+                            {
+                                "text": result.next_question,
+                                "direction_id": next_direction_id,
+                                "direction_done": result.direction_done,
+                            },
+                        )
+                        yield _sse("done", {})
+                        return
+            finally:
+                await worker_task
         finally:
             _active_turns.discard(session_id)
 

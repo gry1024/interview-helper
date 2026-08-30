@@ -92,7 +92,7 @@ class CodeExerciseOpen:
     def for_public(self) -> str:
         if not self.ok or self.exercise is None:
             return "本题无法打开，请继续口头回答。"
-        return f"已打开手撕题：{self.exercise.title}"
+        return f"已打开《{self.exercise.title}》"
 
     def sse_payload(self) -> dict[str, str] | None:
         if not self.ok or self.exercise is None:
@@ -122,7 +122,12 @@ def _parse_exercise(raw: Mapping[str, Any]) -> CodeExercise | None:
     if not source_ids or not topics:
         return None
     language = str(raw.get("language") or "python").strip() or "python"
-    roles = _as_str_tuple(raw.get("roles")) or ("llm-algo", "training", "rag")
+    from app.roles import allowed_role_ids
+
+    allowed = set(allowed_role_ids())
+    roles = tuple(
+        item for item in _as_str_tuple(raw.get("roles")) if item in allowed
+    ) or tuple(allowed_role_ids())
     return CodeExercise(
         id=exercise_id,
         title=title,

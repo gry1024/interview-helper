@@ -25,8 +25,8 @@ def _client() -> OpenAI:
     return OpenAI(
         api_key=settings.minimax_api_key,
         base_url=settings.minimax_base_url,
-        timeout=90,
-        max_retries=1,
+        timeout=45,
+        max_retries=0,
     )
 
 
@@ -64,23 +64,94 @@ def _message_content(message: Any) -> str:
     return content if isinstance(content, str) else ""
 
 
+def _unescape_json_char(escaped: str) -> str:
+    mapping = {"n": "\n", "t": "\t", "r": "\r", '"': '"', "\\": "\\", "/": "/"}
+    return mapping.get(escaped, escaped)
+
+
+def partial_json_string_field(buffer: str, field: str) -> str | None:
+    """Return a JSON string field that may still be streaming (unescaped so far)."""
+
+    key = f'"{field}"'
+    index = buffer.find(key)
+    if index < 0:
+        return None
+    colon = buffer.find(":", index + len(key))
+    if colon < 0:
+        return None
+    rest = buffer[colon + 1 :].lstrip()
+    if not rest.startswith('"'):
+        return None
+    chars: list[str] = []
+    escaped = False
+    for char in rest[1:]:
+        if escaped:
+            chars.append(_unescape_json_char(char))
+            escaped = False
+            continue
+        if char == "\\":
+            escaped = True
+            continue
+        if char == '"':
+            return "".join(chars)
+        chars.append(char)
+    return "".join(chars)
+
+
+def _delta_content(chunk: Any) -> str:
+    choices = getattr(chunk, "choices", None) or []
+    if not choices:
+        return ""
+    delta = getattr(choices[0], "delta", None)
+    content = getattr(delta, "content", None) if delta is not None else None
+    return content if isinstance(content, str) else ""
+
+
+def _consume_streamed_json(response: Any, on_progress: Callable[[dict[str, Any]], None] | None) -> str:
+    """Read a streaming or non-streaming completion and emit thought as it appears."""
+
+    if hasattr(response, "choices") and getattr(response, "choices", None):
+        content = _message_content(response.choices[0].message)
+        thought = partial_json_string_field(content, "thought") if content else None
+        if on_progress and thought:
+            on_progress({"kind": "thought_delta", "text": thought})
+        return content
+
+    content = ""
+    emitted = 0
+    for chunk in response:
+        piece = _delta_content(chunk)
+        if not piece:
+            continue
+        content += piece
+        thought = partial_json_string_field(content, "thought")
+        if on_progress and thought and len(thought) > emitted:
+            on_progress({"kind": "thought_delta", "text": thought[emitted:]})
+            emitted = len(thought)
+    return content
+
+
 def _create_completion(
     messages: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None = None,
+    *,
+    max_tokens: int = 2048,
+    stream: bool = False,
 ) -> Any:
     payload: dict[str, Any] = {
         "model": settings.minimax_model,
         "messages": messages,
         "temperature": 0.2,
-        "max_completion_tokens": 8192,
+        "max_completion_tokens": max_tokens,
         "extra_body": {
-            "thinking": {"type": "adaptive"},
-            "reasoning_split": True,
+            "thinking": {"type": "disabled"},
         },
     }
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
+    if stream:
+        payload["stream"] = True
 
     try:
         return _client().chat.completions.create(**payload)
@@ -91,7 +162,7 @@ def _create_completion(
 
 
 def complete_json(system_prompt: str, user_prompt: str) -> dict[str, Any]:
-    """Call MiniMax M3 with adaptive thinking and parse the final JSON object."""
+    """Call MiniMax and parse the final JSON object. Thinking stays disabled."""
 
     response = _create_completion(
         [
@@ -112,11 +183,14 @@ def complete_json_with_tools(
     tools: list[dict[str, Any]],
     run_tool: ToolRunner,
     max_tool_rounds: int = 1,
+    on_progress: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     """One tool-enabled round, then continue and parse the existing turn JSON.
 
     The runner may expose multiple tools in one list (e.g. code_inspect 与
     code_exercise 并列). This loop does not special-case names.
+    Final JSON may be streamed so thought can appear before the object is complete.
+    Model thinking stays disabled; only the JSON `thought` field is streamed.
     """
 
     messages: list[dict[str, Any]] = [
@@ -126,6 +200,8 @@ def complete_json_with_tools(
 
     for round_index in range(max_tool_rounds + 1):
         use_tools = tools if round_index < max_tool_rounds else None
+        # MiniMax streamed content often contains raw newlines inside JSON
+        # strings, which breaks parsing. Tools still emit live via run_tool.
         response = _create_completion(messages, use_tools)
         message = response.choices[0].message
         tool_calls = list(getattr(message, "tool_calls", None) or [])
@@ -170,6 +246,9 @@ def complete_json_with_tools(
         content = _message_content(message)
         if not content.strip():
             raise LLMError("MiniMax returned an empty response")
+        thought = partial_json_string_field(content, "thought")
+        if on_progress and thought:
+            on_progress({"kind": "thought_delta", "text": thought})
         return _parse_json_object(content)
 
     raise LLMError("MiniMax did not return a JSON object after tools")
@@ -182,6 +261,7 @@ def complete_text_with_tools(
     tools: list[dict[str, Any]],
     run_tool: ToolRunner,
     max_tool_rounds: int = 2,
+    max_tokens: int = 6144,
 ) -> str:
     """Tool-enabled completion that returns the final markdown/text body."""
 
@@ -192,7 +272,7 @@ def complete_text_with_tools(
 
     for round_index in range(max_tool_rounds + 1):
         use_tools = tools if round_index < max_tool_rounds else None
-        response = _create_completion(messages, use_tools)
+        response = _create_completion(messages, use_tools, max_tokens=max_tokens)
         message = response.choices[0].message
         tool_calls = list(getattr(message, "tool_calls", None) or [])
 

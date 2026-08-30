@@ -13,9 +13,10 @@
     >
     <link rel="preconnect" href="https://registry.npmmirror.com">
     <link rel="preconnect" href="https://cdn.jsdelivr.net">
-    <link rel="stylesheet" href="/styles.css?v=17">
+    <link rel="stylesheet" href="/styles.css?v=21">
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
-    <script src="/app.js?v=17" defer></script>
+    <script src="/interviewer-agent-data.js?v=21" defer></script>
+    <script src="/app.js?v=21" defer></script>
   </head>
   <body>
     <div class="app-shell">
@@ -64,6 +65,18 @@
           >
             JD/面经库
           </button>
+          <button
+            class="tab-btn"
+            id="tab-interviewer"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="panel-interviewer"
+            data-panel="interviewer"
+            tabindex="-1"
+          >
+            面试官设计
+          </button>
         </nav>
 
         <p class="sidebar-note">只问你的项目，以及它对岗位是否真正有价值。</p>
@@ -83,25 +96,15 @@
 
           <div class="interview-start" id="interview-start">
             <form class="session-form" id="session-form" novalidate>
-              <div class="demo-strip" role="group" aria-label="试用样本">
-                <span class="demo-strip-label">试用样本</span>
-                <button
-                  class="demo-btn"
-                  id="demo-minimind"
-                  type="button"
-                  data-demo="minimind"
-                  aria-pressed="false"
-                >
-                  试用 MiniMind
-                </button>
-                <button
-                  class="demo-btn"
-                  id="demo-nano-vllm"
-                  type="button"
-                  data-demo="nano-vllm"
-                  aria-pressed="false"
-                >
-                  试用 nano-vLLM
+              <div class="demo-strip" role="group" aria-label="测试样本">
+                <label class="demo-strip-label" for="demo-select">测试样本：</label>
+                <select class="input demo-select" id="demo-select">
+                  <option value="">选择项目</option>
+                  <option value="minimind">MiniMind</option>
+                  <option value="nano-vllm">nano-vLLM</option>
+                </select>
+                <button class="btn demo-fill-btn" id="demo-fill" type="button">
+                  填入
                 </button>
               </div>
 
@@ -141,8 +144,8 @@
                 <span>目标岗位</span>
                 <select class="input" id="role" name="role" required>
                   <option value="llm-algo">LLM 算法实习</option>
-                  <option value="training">大模型训练与对齐</option>
-                  <option value="rag">RAG 与 Agent 应用</option>
+                  <option value="agent">Agent 应用实习</option>
+                  <option value="rag">RAG / AI 搜索实习</option>
                 </select>
               </label>
 
@@ -285,6 +288,19 @@
               <span>正在加载真实样本</span>
             </div>
           </div>
+        </section>
+
+        <section
+          class="panel"
+          id="panel-interviewer"
+          role="tabpanel"
+          aria-labelledby="tab-interviewer"
+          tabindex="0"
+          hidden
+        >
+          <p class="eyebrow">面试官设计</p>
+          <h1>面试官底层怎么设计，原样摊开。</h1>
+          <div id="interviewer-agent-root"></div>
         </section>
       </main>
     </div>

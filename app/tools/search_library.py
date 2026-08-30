@@ -107,8 +107,8 @@ class LibrarySearchResult:
         if self.error:
             return "面经检索暂不可用。"
         if not self.hits:
-            return f"检索面经：{self.query}（无命中）"
-        return f"检索面经：{self.query}（{len(self.hits)} 条真实问法）"
+            return "没有检索到相关面经"
+        return f"检索到 {len(self.hits)} 条面经"
 
 
 def _tokenize(text: str) -> list[str]:
@@ -280,7 +280,8 @@ def run_search_library_from_tool_args(
 
 
 def default_search_query(*, direction_title: str, direction_goal: str, answer: str) -> str:
-    parts = [direction_title or "", direction_goal or ""]
+    goal_head = re.split(r"[：:，,。]", direction_goal or "", maxsplit=1)[0][:24]
+    parts = [direction_title or "", goal_head]
     answer_terms = LATIN_TOKEN.findall((answer or "").lower())
     parts.extend(answer_terms[:6])
     merged = " ".join(part for part in parts if part).strip()

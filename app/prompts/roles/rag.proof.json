@@ -1,0 +1,136 @@
+{
+  "role": "rag",
+  "jd_count": 5,
+  "interview_count": 26,
+  "sample_ids": [
+    "aliyun-llm-app-dev-intern-2027",
+    "bytedance-ai-search-agent-intern-386087",
+    "deepseek-ai-search-algo",
+    "baidu-campus-llm-algo-j100728",
+    "meituan-agentic-search-intern-3394467312",
+    "bytedance-llm-algorithm-intern-interview",
+    "kuaishou-llm-daily-intern-second",
+    "shunfeng-llm-intern-interview",
+    "tme-nlp-intern-interview",
+    "huolala-llm-first-interview",
+    "baidu-wence-llm-second-interview",
+    "xhs-unknown-iv-69e76d75",
+    "xhs-meituan-iv-69354276",
+    "xhs-kuaishou-iv-6985a599",
+    "xhs-meituan-iv-68dfc7b4",
+    "xhs-bytedance-iv-6a894831",
+    "xhs-xiaomi-iv-697ef996",
+    "xhs-netease-iv-68edc588",
+    "xhs-unknown-iv-69e0b6a0",
+    "xhs-unknown-iv-6a93a2ba",
+    "xhs-unknown-iv-6a50f1e3",
+    "xhs-unknown-iv-69e8ea79",
+    "xhs-unknown-iv-696ef650",
+    "xhs-xiaohongshu-iv-6927ba54",
+    "xhs-bytedance-iv-6a902c8f",
+    "xhs-bytedance-iv-69ccec09",
+    "xhs-jd-iv-6975bb0a",
+    "xhs-bytedance-iv-68a342a4",
+    "xhs-kuaishou-iv-69435d73",
+    "xhs-unknown-iv-68dd3d5c",
+    "xhs-bytedance-iv-6a8420e0"
+  ],
+  "hot_terms": [
+    {
+      "term": "rag",
+      "count": 72
+    },
+    {
+      "term": "agent",
+      "count": 39
+    },
+    {
+      "term": "lora",
+      "count": 30
+    },
+    {
+      "term": "sft",
+      "count": 23
+    },
+    {
+      "term": "transformer",
+      "count": 22
+    },
+    {
+      "term": "rope",
+      "count": 17
+    },
+    {
+      "term": "dpo",
+      "count": 16
+    },
+    {
+      "term": "attention",
+      "count": 14
+    },
+    {
+      "term": "embedding",
+      "count": 12
+    },
+    {
+      "term": "grpo",
+      "count": 11
+    },
+    {
+      "term": "召回",
+      "count": 10
+    },
+    {
+      "term": "对齐",
+      "count": 9
+    },
+    {
+      "term": "chunk",
+      "count": 8
+    },
+    {
+      "term": "显存",
+      "count": 8
+    },
+    {
+      "term": "量化",
+      "count": 8
+    },
+    {
+      "term": "mha",
+      "count": 7
+    },
+    {
+      "term": "kv cache",
+      "count": 7
+    },
+    {
+      "term": "ppo",
+      "count": 7
+    },
+    {
+      "term": "rlhf",
+      "count": 6
+    },
+    {
+      "term": "rerank",
+      "count": 6
+    },
+    {
+      "term": "预训练",
+      "count": 5
+    },
+    {
+      "term": "gqa",
+      "count": 4
+    },
+    {
+      "term": "后训练",
+      "count": 4
+    },
+    {
+      "term": "工具调用",
+      "count": 4
+    }
+  ]
+}

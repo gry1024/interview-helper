@@ -108,61 +108,81 @@ def static_origin() -> str:
         server.server_close()
 
 
-def test_clicking_demo_buttons_fills_github_and_statement(static_origin: str) -> None:
+def test_selecting_demo_without_fill_leaves_form_empty(static_origin: str) -> None:
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page = browser.new_page(viewport={"width": 1440, "height": 900})
+        page.goto(static_origin, wait_until="domcontentloaded")
+        page.wait_for_selector("#demo-select")
+        page.wait_for_selector("#demo-fill")
+        page.wait_for_function(
+            "() => (window.__interviewHelper?.getDemoCatalog() || []).length >= 2"
+        )
+        page.select_option("#demo-select", "nano-vllm")
+        page.wait_for_timeout(200)
+        assert page.input_value("#github-url") == ""
+        assert page.input_value("#statement") == ""
+        browser.close()
+
+
+def test_select_and_fill_writes_github_and_statement(static_origin: str) -> None:
     minimind = apply_demo_preset("minimind")
     nano = apply_demo_preset("nano-vllm")
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(headless=True)
         page = browser.new_page(viewport={"width": 1440, "height": 900})
         page.goto(static_origin, wait_until="domcontentloaded")
-        page.wait_for_selector("#demo-minimind")
-        page.wait_for_selector("#demo-nano-vllm")
+        page.wait_for_selector("#demo-select")
+        page.wait_for_selector("#demo-fill")
         page.wait_for_function(
             "() => (window.__interviewHelper?.getDemoCatalog() || []).length >= 2"
         )
 
-        assert page.locator("#demo-minimind").inner_text().strip() == "试用 MiniMind"
-        assert page.locator("#demo-nano-vllm").inner_text().strip() == "试用 nano-vLLM"
+        body = page.locator("body").inner_text()
+        assert "测试样本" in body
+        assert page.locator("#demo-fill").inner_text().strip() == "填入"
+        assert page.locator("#demo-minimind").count() == 0
+        assert page.locator("#demo-nano-vllm").count() == 0
+        assert page.get_by_role("button", name="试用 MiniMind").count() == 0
+        assert page.get_by_role("button", name="试用 nano-vLLM").count() == 0
+        options = page.locator("#demo-select option").all_text_contents()
+        assert "MiniMind" in options
+        assert "nano-vLLM" in options
         assert page.locator("#start-session").is_visible()
         assert page.input_value("#github-url") == ""
         assert page.input_value("#statement") == ""
-
-        page.click("#demo-minimind")
-        page.wait_for_function(
-            "(url) => document.querySelector('#github-url').value === url",
-            arg=minimind["github_url"],
-        )
-        assert page.input_value("#github-url") == minimind["github_url"]
-        assert page.input_value("#statement") == minimind["statement"]
-        assert page.input_value("#role") == "llm-algo"
-        assert "active" in (page.get_attribute("#demo-minimind", "class") or "")
-        assert "active" not in (page.get_attribute("#demo-nano-vllm", "class") or "")
-
-        page.click("#demo-nano-vllm")
-        page.wait_for_function(
-            "(url) => document.querySelector('#github-url').value === url",
-            arg=nano["github_url"],
-        )
-        assert page.input_value("#github-url") == nano["github_url"]
-        assert page.input_value("#statement") == nano["statement"]
-        assert "Triton" in page.input_value("#statement")
-        assert "Chunked Prefill" in page.input_value("#statement")
-        assert "FP8" in page.input_value("#statement")
-        assert "active" in (page.get_attribute("#demo-nano-vllm", "class") or "")
-        assert "active" not in (page.get_attribute("#demo-minimind", "class") or "")
-
-        page.click("#demo-minimind")
-        page.wait_for_function(
-            "(url) => document.querySelector('#github-url').value === url",
-            arg=minimind["github_url"],
-        )
-        assert page.input_value("#github-url") == minimind["github_url"]
-        assert page.input_value("#statement") == minimind["statement"]
-
         start_box = page.locator("#start-session").bounding_box()
         assert start_box is not None
         assert start_box["y"] + start_box["height"] <= 900
         demo_box = page.locator(".demo-strip").bounding_box()
         assert demo_box is not None
         assert demo_box["y"] >= 0
+
+        page.select_option("#demo-select", "nano-vllm")
+        page.wait_for_timeout(150)
+        assert page.input_value("#github-url") == ""
+        assert page.input_value("#statement") == ""
+
+        page.click("#demo-fill")
+        page.wait_for_function(
+            "(url) => document.querySelector('#github-url').value === url",
+            arg=nano["github_url"],
+        )
+        assert page.input_value("#github-url") == nano["github_url"]
+        assert page.input_value("#statement") == nano["statement"]
+        assert page.input_value("#role") == "llm-algo"
+        assert "Triton" in page.input_value("#statement")
+        assert "Chunked Prefill" in page.input_value("#statement")
+        assert "FP8" in page.input_value("#statement")
+
+        page.select_option("#demo-select", "minimind")
+        page.wait_for_timeout(150)
+        assert page.input_value("#github-url") == nano["github_url"]
+        page.click("#demo-fill")
+        page.wait_for_function(
+            "(url) => document.querySelector('#github-url').value === url",
+            arg=minimind["github_url"],
+        )
+        assert page.input_value("#github-url") == minimind["github_url"]
+        assert page.input_value("#statement") == minimind["statement"]
         browser.close()

@@ -6,7 +6,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from app.llm import LLMError, complete_json_with_tools
+from app.llm import LLMError, complete_json, complete_json_with_tools
 from app.models import TeacherHintResult
 from app.tools.code_inspect import CODE_INSPECT_TOOL, run_code_inspect_from_tool_args
 
@@ -79,12 +79,28 @@ def write_teacher_hint(
         tool_events.append({"name": name, "args": args, "result": public_text})
         return model_text
 
+    must_inspect = any(
+        token in current_question for token in ("对照仓库", "rerank", "万卡")
+    )
+    if must_inspect:
+        user_prompt += "\n\n这一问必须先调用 code_inspect 对照仓库，再写 hint。"
+
     raw = complete_json_with_tools(
         system_prompt,
         user_prompt,
         tools=[CODE_INSPECT_TOOL],
         run_tool=run_tool,
     )
+    if must_inspect and not any(event.get("name") == "code_inspect" for event in tool_events):
+        inspect_text = run_tool(
+            "code_inspect",
+            {"query": current_question[:240]},
+        )
+        user_prompt += f"\n\n已对照仓库：{inspect_text[:1200]}"
+        raw = complete_json(
+            system_prompt,
+            user_prompt,
+        )
     try:
         result = TeacherHintResult.model_validate(raw)
     except ValidationError as exc:

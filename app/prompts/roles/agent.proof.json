@@ -1,0 +1,156 @@
+{
+  "role": "agent",
+  "jd_count": 23,
+  "interview_count": 28,
+  "sample_ids": [
+    "baidu-agent-algorithm-intern-j97505",
+    "alibaba-agent-dev-intern-2027",
+    "alibaba-agent-app-intern-439376",
+    "alibaba-tstar-agent-intern-439692",
+    "bytedance-agent-dev-intern-435369",
+    "kuaishou-llm-agent-intern-441964",
+    "aliyun-agent-algo-intern-440646",
+    "transsion-agent-intern-444729",
+    "xhs-xiaohongshu-jd-6a79aa34",
+    "xhs-alibaba-iv-6a745511",
+    "xhs-alibaba-iv-6a7c9590",
+    "xhs-unknown-iv-6a85177b",
+    "xhs-unknown-iv-6a7c94da",
+    "xhs-unknown-jd-6a828fa6",
+    "xhs-zhipu-jd-6a58b2c0",
+    "xhs-zhipu-jd-695b9089",
+    "deepseek-agent-infra",
+    "deepseek-train-infer-framework",
+    "deepseek-code-agent-data",
+    "deepseek-posttrain-algo-researcher",
+    "baidu-ai-agent-algo-j99071",
+    "alibaba-tstar-agent-intern-official-199903900001",
+    "deepseek-agent-harness-engineer",
+    "alibaba-taotian-llm-intern-interview",
+    "sensetime-llm-app-intern-interview",
+    "xhs-tencent-agent-69cbee68",
+    "xhs-alibaba-taotian-agent-69dbbf4b",
+    "xhs-startup-agent-69ca958d",
+    "xhs-ant-llm-intern-6a86fbea",
+    "xhs-meituan-llm-summer-69fc448f",
+    "xhs-unknown-iv-6901e9ed",
+    "xhs-unknown-iv-69495855",
+    "xhs-zhipu-iv-6a92bd8a",
+    "xhs-kuaishou-iv-6a843c06",
+    "xhs-alibaba-iv-6a254158",
+    "xhs-bytedance-iv-6a76b923",
+    "xhs-alibaba-taotian-iv-69c28190",
+    "xhs-alibaba-iv-6a69e1de",
+    "xhs-unknown-iv-69a84b06",
+    "xhs-unknown-iv-6a546c44",
+    "xhs-unknown-iv-6a9309fd",
+    "xhs-unknown-iv-68cd3273",
+    "xhs-unknown-iv-6a8c68a5",
+    "xhs-bytedance-iv-6a9152b6",
+    "xhs-unknown-iv-68a0324f",
+    "xhs-alibaba-iv-6a803ae0",
+    "xhs-shopee-iv-6a64cc53",
+    "xhs-bytedance-iv-6a642bb8",
+    "xhs-unknown-iv-6a69fb79",
+    "xhs-ant-iv-681bfbd0",
+    "xhs-deepseek-iv-690b6bf7"
+  ],
+  "hot_terms": [
+    {
+      "term": "agent",
+      "count": 313
+    },
+    {
+      "term": "sft",
+      "count": 40
+    },
+    {
+      "term": "rag",
+      "count": 33
+    },
+    {
+      "term": "工具调用",
+      "count": 31
+    },
+    {
+      "term": "grpo",
+      "count": 29
+    },
+    {
+      "term": "lora",
+      "count": 28
+    },
+    {
+      "term": "dpo",
+      "count": 26
+    },
+    {
+      "term": "ppo",
+      "count": 23
+    },
+    {
+      "term": "rlhf",
+      "count": 18
+    },
+    {
+      "term": "transformer",
+      "count": 16
+    },
+    {
+      "term": "attention",
+      "count": 13
+    },
+    {
+      "term": "后训练",
+      "count": 13
+    },
+    {
+      "term": "对齐",
+      "count": 10
+    },
+    {
+      "term": "memory",
+      "count": 10
+    },
+    {
+      "term": "mcp",
+      "count": 8
+    },
+    {
+      "term": "显存",
+      "count": 7
+    },
+    {
+      "term": "分布式",
+      "count": 6
+    },
+    {
+      "term": "kv cache",
+      "count": 5
+    },
+    {
+      "term": "量化",
+      "count": 5
+    },
+    {
+      "term": "chunk",
+      "count": 3
+    },
+    {
+      "term": "预训练",
+      "count": 2
+    },
+    {
+      "term": "embedding",
+      "count": 2
+    },
+    {
+      "term": "rope",
+      "count": 1
+    },
+    {
+      "term": "rerank",
+      "count": 1
+    }
+  ]
+}

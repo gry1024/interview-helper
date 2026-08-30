@@ -31,10 +31,10 @@ const codeIdeExpand = document.querySelector("#code-ide-expand");
 const codeIdeCollapse = document.querySelector("#code-ide-collapse");
 const ROLE_LABELS = {
   "llm-algo": "LLM 算法实习",
-  training: "大模型训练与对齐",
-  rag: "RAG 与 Agent 应用",
+  agent: "Agent 应用实习",
+  rag: "RAG / AI 搜索实习",
 };
-const DEMO_CATALOG_URL = "/demo-projects.json?v=17";
+const DEMO_CATALOG_URL = "/demo-projects.json?v=21";
 let demoCatalog = [];
 let demoCatalogPromise = null;
 const LIBRARY_PAGE_SIZE = 9;
@@ -72,6 +72,12 @@ const REPORT_SECTIONS = [
     aliases: ["项目改良", "最小改造", "项目改造", "改造建议"],
   },
 ];
+const TOOL_UI = {
+  thinking: { label: "思考", start: "正在组织这一轮评价" },
+  search_library: { label: "检索面经", start: "正在调用检索面经工具" },
+  code_inspect: { label: "查仓库", start: "正在调用查仓库工具" },
+  code_exercise: { label: "打开手撕", start: "正在打开手撕题" },
+};
 
 function loadDemoCatalog() {
   if (demoCatalog.length) {
@@ -81,7 +87,7 @@ function loadDemoCatalog() {
     demoCatalogPromise = fetch(DEMO_CATALOG_URL, { cache: "no-store" })
       .then((response) => {
         if (!response.ok) {
-          throw new Error("试用样本加载失败");
+          throw new Error("测试样本加载失败");
         }
         return response.json();
       })
@@ -101,12 +107,8 @@ function getDemoById(demoId) {
   return demoCatalog.find((item) => item.id === demoId) || null;
 }
 
-function markDemoSelected(demoId) {
-  document.querySelectorAll("[data-demo]").forEach((button) => {
-    const selected = button.dataset.demo === demoId;
-    button.classList.toggle("active", selected);
-    button.setAttribute("aria-pressed", String(selected));
-  });
+function selectedDemoId() {
+  return document.querySelector("#demo-select")?.value || "";
 }
 
 function applyDemoPreset(demoId, currentRole) {
@@ -128,7 +130,6 @@ function applyDemoPreset(demoId, currentRole) {
   if (roleSelect && (!roleSelect.value || sampleRole)) {
     roleSelect.value = nextRole;
   }
-  markDemoSelected(demoId);
   return {
     github_url: demo.github_url,
     statement: demo.statement,
@@ -136,12 +137,16 @@ function applyDemoPreset(demoId, currentRole) {
   };
 }
 
-async function handleDemoClick(demoId) {
+async function handleDemoFill() {
+  const demoId = selectedDemoId();
+  if (!demoId) {
+    return;
+  }
   try {
     await loadDemoCatalog();
     const filled = applyDemoPreset(demoId, document.querySelector("#role")?.value);
     if (!filled) {
-      throw new Error("未找到该试用样本");
+      throw new Error("未找到该测试样本");
     }
   } catch (error) {
     console.error("Failed to apply demo preset", error);
@@ -150,7 +155,7 @@ async function handleDemoClick(demoId) {
         createTextElement(
           "p",
           "flash error",
-          error instanceof Error ? error.message : "试用样本加载失败",
+          error instanceof Error ? error.message : "测试样本加载失败",
         ),
       );
     }
@@ -621,29 +626,136 @@ function appendTeacherHint(hint, container = chatLog) {
   return row;
 }
 
-function appendUserBlock(text, container = chatLog) {
+function appendUserBlock(text, container = chatLog, options = {}) {
   const block = document.createElement("div");
   block.className = "user-block";
 
   const row = document.createElement("div");
   row.className = "bubble-row user";
-  row.append(createTextElement("div", "bubble", text));
+  const kind = options.kind || "";
+  if (kind === "code_submission" || kind === "code_dump") {
+    const bubble = document.createElement("div");
+    bubble.className = "bubble code-submit-bubble";
+    bubble.append(
+      createTextElement(
+        "p",
+        "code-submit-badge",
+        kind === "code_dump"
+          ? "对话框贴了代码（应走手撕编辑器）"
+          : options.fallback
+            ? "代码提交（经对话通道）"
+            : "代码提交",
+      ),
+    );
+    const preview = document.createElement("pre");
+    preview.className = "code-submit-preview";
+    preview.textContent = text;
+    bubble.append(preview);
+    row.append(bubble);
+  } else {
+    row.append(createTextElement("div", "bubble", text));
+  }
 
-  const thought = document.createElement("div");
-  thought.className = "thought";
-  thought.hidden = true;
-
+  const thought = createThoughtPanel();
   block.append(row, thought);
   container.append(block);
   container.scrollTop = container.scrollHeight;
   return thought;
 }
 
+function createThoughtPanel() {
+  const thought = document.createElement("div");
+  thought.className = "thought thought-panel";
+  thought.hidden = true;
+  const timeline = document.createElement("div");
+  timeline.className = "thought-timeline";
+  const text = document.createElement("div");
+  thought.append(timeline, text);
+  text.className = "thought-text";
+  return thought;
+}
+
+function thoughtTextEl(panel) {
+  return panel?.querySelector?.(".thought-text") || panel;
+}
+
+function thoughtTimelineEl(panel) {
+  if (!panel?.querySelector) {
+    return null;
+  }
+  let timeline = panel.querySelector(".thought-timeline");
+  if (!timeline) {
+    timeline = document.createElement("div");
+    timeline.className = "thought-timeline";
+    panel.prepend(timeline);
+  }
+  return timeline;
+}
+
+function upsertToolStep(panel, name, payload) {
+  if (!panel) {
+    return;
+  }
+  panel.hidden = false;
+  const timeline = thoughtTimelineEl(panel);
+  if (!timeline) {
+    return;
+  }
+  const ui = TOOL_UI[name] || { label: name, start: `正在调用 ${name} 工具` };
+  if (name !== "thinking") {
+    timeline.querySelector('[data-tool-name="thinking"]')?.remove();
+  }
+  let row = timeline.querySelector(`[data-tool-name="${name}"]`);
+  if (!row) {
+    row = document.createElement("div");
+    row.className = `tool-step tool-${name}`;
+    row.dataset.toolName = name;
+    const icon = document.createElement("span");
+    icon.className = "tool-step-icon";
+    icon.textContent = ui.label;
+    const body = document.createElement("span");
+    body.className = "tool-step-body";
+    row.append(icon, body);
+    timeline.append(row);
+  }
+  const body = row.querySelector(".tool-step-body");
+  const result = payload?.result || "";
+  const status = payload?.status || payload?.label || ui.start;
+  body.textContent = result || status;
+}
+
 function sanitizeThought(text) {
   return text
     .split("\n")
-    .filter((line) => !/(建议你|总评|复习|岗位本质对照|知识建议|项目改良)/.test(line))
+    .filter((line) => {
+      const trimmed = line.trim();
+      if (/(建议你|总评|复习|岗位本质对照|知识建议|项目改良)/.test(line)) {
+        return false;
+      }
+      if (/^检索面经[：:]/.test(trimmed)) {
+        return false;
+      }
+      if (/^查代码：是（search_library）/.test(trimmed)) {
+        return false;
+      }
+      return true;
+    })
     .join("\n");
+}
+
+function looksLikeCodeDump(text) {
+  const raw = String(text || "");
+  if (/\[code_submission:/.test(raw) || /\[手撕提交/.test(raw)) {
+    return true;
+  }
+  const lines = raw.split("\n").filter((line) => line.trim());
+  if (lines.length < 6) {
+    return false;
+  }
+  const hits = lines.filter((line) =>
+    /^\s*(def |class |import |from \w+ import |@\w+)/.test(line),
+  ).length;
+  return hits >= 4;
 }
 
 function sessionHasEnded() {
@@ -1086,34 +1198,10 @@ async function openCodeExercise(raw) {
 }
 
 function appendCodeSubmissionBubble(code, options) {
-  const fallback = Boolean(options?.fallback);
-  const block = document.createElement("div");
-  block.className = "user-block";
-
-  const row = document.createElement("div");
-  row.className = "bubble-row user";
-  const bubble = document.createElement("div");
-  bubble.className = "bubble code-submit-bubble";
-  bubble.append(
-    createTextElement(
-      "p",
-      "code-submit-badge",
-      fallback ? "代码提交（经对话通道）" : "代码提交",
-    ),
-  );
-  const preview = document.createElement("pre");
-  preview.className = "code-submit-preview";
-  preview.textContent = code;
-  bubble.append(preview);
-  row.append(bubble);
-
-  const thought = document.createElement("div");
-  thought.className = "thought";
-  thought.hidden = true;
-  block.append(row, thought);
-  chatLog.append(block);
-  chatLog.scrollTop = chatLog.scrollHeight;
-  return thought;
+  return appendUserBlock(code, options?.container || chatLog, {
+    kind: "code_submission",
+    fallback: Boolean(options?.fallback),
+  });
 }
 
 function markCodeSubmitted(fallback) {
@@ -1288,12 +1376,18 @@ function setTurnLoading(isLoading) {
   }
 }
 
-function renderStartedSession(session) {
-  directionList.replaceChildren(
-    ...session.directions.map((direction) => {
+function fillDirectionList(listEl, directions, currentId) {
+  if (!listEl) {
+    return;
+  }
+  listEl.replaceChildren(
+    ...(directions || []).map((direction) => {
       const item = document.createElement("li");
       item.className = "direction-item";
       item.dataset.directionId = direction.id;
+      if (currentId && direction.id === currentId) {
+        item.classList.add("current");
+      }
       item.append(
         createTextElement("p", "direction-title", direction.title),
         createTextElement("p", "direction-goal", direction.goal),
@@ -1301,6 +1395,31 @@ function renderStartedSession(session) {
       return item;
     }),
   );
+}
+
+function renderSessionDirections(snapshot) {
+  const session = snapshot?.session || snapshot || {};
+  const directions = session.directions || snapshot?.directions || [];
+  if (!Array.isArray(directions) || directions.length === 0) {
+    return null;
+  }
+  const section = document.createElement("section");
+  section.className = "directions-block review-directions";
+  section.setAttribute("aria-labelledby", "review-directions-title");
+  section.append(
+    createTextElement("p", "section-label", "本场固定方向"),
+    createTextElement("h2", "", "接下来会沿这些链路逐步深挖"),
+  );
+  section.querySelector("h2").id = "review-directions-title";
+  const list = document.createElement("ol");
+  list.className = "direction-list";
+  fillDirectionList(list, directions, session.current_direction_id);
+  section.append(list);
+  return section;
+}
+
+function renderStartedSession(session) {
+  fillDirectionList(directionList, session.directions, "d1");
   cloneNotice.hidden = session.clone_ok;
   cloneNotice.textContent = session.clone_ok
     ? ""
@@ -1333,24 +1452,33 @@ function applySseEvent(eventName, data, thoughtNode, state) {
     } else if (isCodeExerciseOpen()) {
       state.receivedExercise = true;
     }
-    if (eventName === "tool" && thoughtNode && data.result) {
-      thoughtNode.hidden = false;
-      thoughtNode.textContent += `${sanitizeThought(data.result)}\n`;
-      chatLog.scrollTop = chatLog.scrollHeight;
+    if (eventName === "tool") {
+      upsertToolStep(thoughtNode, "code_exercise", {
+        result: sanitizeThought(data.result || "已打开手撕题"),
+      });
     }
+    return;
+  }
+  if (eventName === "tool_start") {
+    const name = data.name || "search_library";
+    upsertToolStep(thoughtNode, name, {
+      status: data.label || TOOL_UI[name]?.start || `正在调用 ${name} 工具`,
+    });
+    chatLog.scrollTop = chatLog.scrollHeight;
     return;
   }
   if (eventName === "thought_delta") {
     thoughtNode.hidden = false;
-    thoughtNode.textContent += sanitizeThought(data.text || "");
+    thoughtNode.querySelector('[data-tool-name="thinking"]')?.remove();
+    thoughtTextEl(thoughtNode).textContent += sanitizeThought(data.text || "");
     chatLog.scrollTop = chatLog.scrollHeight;
     return;
   }
   if (eventName === "tool") {
-    thoughtNode.hidden = false;
     const toolName = data.name || "code_inspect";
-    const toolResult = sanitizeThought(data.result || "");
-    thoughtNode.textContent += `\n查代码：是（${toolName}）\n${toolResult}\n`;
+    upsertToolStep(thoughtNode, toolName, {
+      result: sanitizeThought(data.result || ""),
+    });
     chatLog.scrollTop = chatLog.scrollHeight;
     return;
   }
@@ -1440,6 +1568,14 @@ async function submitTurn(event) {
   }
 
   const thoughtNode = appendUserBlock(answer);
+  thoughtNode.hidden = false;
+  upsertToolStep(thoughtNode, "thinking", {
+    status: "正在组织这一轮评价",
+  });
+  const thinkingRow = thoughtNode.querySelector('[data-tool-name="thinking"]');
+  if (thinkingRow) {
+    thinkingRow.classList.add("tool-thinking");
+  }
   answerInput.value = "";
 
   if (isMockSession()) {
@@ -1701,6 +1837,29 @@ function renderReportTabs(reportText, reportPane) {
   show("overview");
 }
 
+function fillThoughtFromTurn(thoughtNode, body, meta) {
+  thoughtNode.hidden = false;
+  const items = Array.isArray(meta) ? meta : [];
+  const seen = new Set();
+  for (const item of items) {
+    const name = item?.name || "";
+    if (!name || seen.has(name) || name === "thinking") {
+      continue;
+    }
+    seen.add(name);
+    let result = "";
+    if (name === "search_library") {
+      result = "已检索面经";
+    } else if (name === "code_exercise") {
+      result = String(item.result || "已打开手撕题");
+    } else if (name === "code_inspect") {
+      result = "已核对仓库";
+    }
+    upsertToolStep(thoughtNode, name, { result });
+  }
+  thoughtTextEl(thoughtNode).textContent = sanitizeThought(body || "");
+}
+
 function renderTurnsInto(container, turns, helps) {
   container.replaceChildren();
   let thoughtNode = null;
@@ -1719,10 +1878,16 @@ function renderTurnsInto(container, turns, helps) {
       });
       leftover.splice(0, leftover.length, ...remaining);
     } else if (turn.role === "user") {
-      thoughtNode = appendUserBlock(turn.body, container);
+      const meta = turn.meta || {};
+      const kind =
+        meta.kind === "code_submission"
+          ? "code_submission"
+          : looksLikeCodeDump(turn.body)
+            ? "code_dump"
+            : "";
+      thoughtNode = appendUserBlock(turn.body, container, { kind });
     } else if (turn.role === "thought" && thoughtNode) {
-      thoughtNode.hidden = false;
-      thoughtNode.textContent = sanitizeThought(turn.body || "");
+      fillThoughtFromTurn(thoughtNode, turn.body || "", turn.meta);
       thoughtNode = null;
     }
   }
@@ -1744,8 +1909,18 @@ function renderEndedView(snapshot, container) {
   reportPane.setAttribute("data-ended-report", "1");
   renderReportTabs(snapshot.report?.text || "", reportPane);
 
+  const main = document.createElement("div");
+  main.className = "ended-view-main";
+  main.append(chatPane, divider, reportPane);
+
   container.classList.add("ended-view");
-  container.replaceChildren(chatPane, divider, reportPane);
+  const directions = renderSessionDirections(snapshot);
+  if (directions) {
+    container.replaceChildren(directions, main);
+    document.querySelector("#interview-live .directions-block")?.setAttribute("hidden", "");
+  } else {
+    container.replaceChildren(main);
+  }
 }
 
 function markInterviewPanelEnded() {
@@ -1771,7 +1946,10 @@ function ensureEndedShell() {
   const reportPane = document.createElement("div");
   reportPane.className = "ended-pane ended-pane-report";
   reportPane.id = "ended-report-stream";
-  endedView.append(chatPane, divider, reportPane);
+  const main = document.createElement("div");
+  main.className = "ended-view-main";
+  main.append(chatPane, divider, reportPane);
+  endedView.append(main);
   chatLog.replaceWith(endedView);
   closeCodeExercise({ dispose: true });
   markInterviewPanelEnded();
@@ -1929,9 +2107,9 @@ async function submitEndInterview() {
   setComposerEnabled(false);
   const endedView = ensureEndedShell();
   const reportPane = endedView.querySelector(".ended-pane-report");
-  const stream = document.createElement("pre");
-  stream.className = "report-stream";
-  reportPane.replaceChildren(stream);
+  const loading = createLoadingState("生成评价报告中");
+  loading.classList.add("report-generating");
+  reportPane.replaceChildren(loading);
 
   try {
     const response = await fetch(`/api/sessions/${sessionId}/end`, {
@@ -1949,18 +2127,6 @@ async function submitEndInterview() {
     }
 
     await consumeSse(response, (eventName, data) => {
-      if (eventName === "report_delta") {
-        stream.textContent += data.text || "";
-        reportPane.scrollTop = reportPane.scrollHeight;
-        return;
-      }
-      if (eventName === "tool") {
-        const note = document.createElement("p");
-        note.className = "report-tool-note";
-        note.textContent = `查代码：${data.result || ""}`;
-        reportPane.insertBefore(note, stream);
-        return;
-      }
       if (eventName === "error") {
         throw new Error(data.message || "结束报告生成失败");
       }
@@ -1987,6 +2153,202 @@ async function submitEndInterview() {
   }
 }
 
+const interviewerRoot = document.querySelector("#interviewer-agent-root");
+let interviewerAgentSeq = 0;
+let interviewerSelectedRole = "";
+
+function makePromptBlock(text) {
+  const pre = document.createElement("pre");
+  pre.className = "prompt-block";
+  pre.textContent = text || "";
+  return pre;
+}
+
+function renderInterviewerAgent(data) {
+  if (!interviewerRoot) {
+    return;
+  }
+  const root = document.createElement("div");
+  root.className = "interviewer-agent";
+
+  const switcher = document.createElement("div");
+  switcher.className = "library-kind-switch";
+  switcher.setAttribute("role", "tablist");
+  switcher.setAttribute("aria-label", "选择岗位人设");
+  (data.roles || []).forEach((role) => {
+    const button = document.createElement("button");
+    button.className = "kind-btn";
+    button.type = "button";
+    button.dataset.role = role.id;
+    button.textContent = role.label;
+    if (role.id === data.selected_role) {
+      button.classList.add("active");
+    }
+    button.addEventListener("click", () => {
+      loadInterviewerAgent(role.id);
+    });
+    switcher.append(button);
+  });
+  root.append(switcher);
+
+  const selected = (data.roles || []).find((item) => item.id === data.selected_role) || {};
+  const stats = document.createElement("div");
+  stats.className = "agent-stats";
+  [
+    ["岗位", selected.label || data.role_label || ""],
+    ["JD", String(selected.jd_count ?? "—")],
+    ["面经", String(selected.interview_count ?? "—")],
+  ].forEach(([label, value]) => {
+    const card = document.createElement("div");
+    card.className = "agent-stat";
+    card.append(
+      createTextElement("p", "agent-stat-label", label),
+      createTextElement("p", "agent-stat-value", value),
+    );
+    stats.append(card);
+  });
+  root.append(stats);
+  if (selected.one_liner) {
+    root.append(createTextElement("p", "section-copy", selected.one_liner));
+  }
+
+  const personaSection = document.createElement("section");
+  personaSection.className = "divider-section";
+  personaSection.append(
+    createTextElement("p", "section-label", "岗位人设"),
+    createTextElement("h2", "", `${selected.label || ""} · 全文`),
+    makePromptBlock(selected.persona_prompt || data.prompts?.role || ""),
+  );
+  root.append(personaSection);
+
+  const promptSection = document.createElement("section");
+  promptSection.className = "divider-section";
+  promptSection.append(
+    createTextElement("p", "section-label", "System prompt"),
+    createTextElement("h2", "", "面中实际注入的完整系统提示"),
+    createTextElement(
+      "p",
+      "section-copy",
+      "下面是 app.agent.build_turn_system_prompt 的原文，含 interviewer.md、该岗人设文件、本场占位项目和工具契约。",
+    ),
+    makePromptBlock(data.system_prompt || ""),
+  );
+  root.append(promptSection);
+
+  const skillSection = document.createElement("section");
+  skillSection.className = "divider-section";
+  skillSection.append(
+    createTextElement("p", "section-label", "Skill"),
+    createTextElement("h2", "", "方向规划、话题锁、工具策略"),
+  );
+  (data.skills || []).forEach((skill) => {
+    skillSection.append(createTextElement("h3", "agent-subhead", skill.name || skill.id));
+    skillSection.append(createTextElement("p", "section-copy", skill.text || ""));
+    skillSection.append(createTextElement("p", "field-hint", `来源：${skill.source || ""}`));
+  });
+  root.append(skillSection);
+
+  const toolSection = document.createElement("section");
+  toolSection.className = "divider-section";
+  toolSection.append(
+    createTextElement("p", "section-label", "工具"),
+    createTextElement("h2", "", "与代码 INTERVIEW_TURN_TOOLS 一致"),
+  );
+  (data.tools || []).forEach((tool) => {
+    const when = (data.when_to_call && data.when_to_call[tool.name]) || "";
+    toolSection.append(createTextElement("h3", "agent-subhead", tool.name || ""));
+    toolSection.append(createTextElement("p", "section-copy", tool.description || ""));
+    if (when) {
+      toolSection.append(createTextElement("p", "section-copy", `何时调用：${when}`));
+    }
+    toolSection.append(makePromptBlock(JSON.stringify(tool.parameters || {}, null, 2)));
+  });
+  root.append(toolSection);
+
+  const ruleSection = document.createElement("section");
+  ruleSection.className = "divider-section";
+  ruleSection.append(
+    createTextElement("p", "section-label", "运行规则"),
+    createTextElement("h2", "", "从 app/agent.py 读出的硬约束"),
+  );
+  const list = document.createElement("ul");
+  list.className = "agent-rule-list";
+  (data.runtime_rules || []).forEach((rule) => {
+    const item = document.createElement("li");
+    item.append(createTextElement("p", "section-copy", rule.text || ""));
+    item.append(createTextElement("p", "field-hint", `${rule.source || ""} · ${JSON.stringify(rule.value)}`));
+    list.append(item);
+  });
+  ruleSection.append(list);
+  root.append(ruleSection);
+
+  const filesSection = document.createElement("section");
+  filesSection.className = "divider-section";
+  filesSection.append(
+    createTextElement("p", "section-label", "Prompt 原件"),
+    createTextElement("h2", "", "interviewer.md"),
+    makePromptBlock(data.prompts?.interviewer || ""),
+  );
+  root.append(filesSection);
+
+  interviewerRoot.replaceChildren(root);
+}
+
+function loadInterviewerAgent(role) {
+  if (!interviewerRoot) {
+    return;
+  }
+  const source = window.INTERVIEWER_AGENT;
+  if (!source || !Array.isArray(source.roles) || !source.roles.length) {
+    interviewerRoot.replaceChildren(
+      createTextElement("p", "flash error", "面试官定义未加载"),
+    );
+    return;
+  }
+  const nextRole = role || interviewerSelectedRole || source.selected_role;
+  const selected = source.roles.find((item) => item.id === nextRole) || source.roles[0];
+  interviewerSelectedRole = selected.id;
+  renderInterviewerAgent({
+    ...source,
+    selected_role: selected.id,
+    role_label: selected.label,
+    system_prompt: selected.system_prompt || source.system_prompt,
+    prompts: {
+      ...(source.prompts || {}),
+      role: selected.persona_prompt || source.prompts?.role,
+    },
+  });
+}
+
+async function loadRoleOptions() {
+  const select = document.querySelector("#role");
+  if (!select) {
+    return;
+  }
+  try {
+    const response = await fetch("/api/roles", { headers: { Accept: "application/json" } });
+    const data = await response.json().catch(() => ({}));
+    const roles = Array.isArray(data.roles) ? data.roles : [];
+    if (!roles.length) {
+      return;
+    }
+    const current = select.value;
+    select.replaceChildren();
+    roles.forEach((role) => {
+      const option = document.createElement("option");
+      option.value = role.id;
+      option.textContent = role.label;
+      select.append(option);
+      ROLE_LABELS[role.id] = role.label;
+    });
+    if ([...select.options].some((item) => item.value === current)) {
+      select.value = current;
+    }
+  } catch (error) {
+    console.error("Failed to load roles", error);
+  }
+}
+
 function activateTab(nextTab) {
   const panelName = nextTab.dataset.panel;
 
@@ -2006,6 +2368,9 @@ function activateTab(nextTab) {
   }
   if (panelName === "reviews") {
     void loadReviews();
+  }
+  if (panelName === "interviewer") {
+    loadInterviewerAgent();
   }
 }
 
@@ -2123,6 +2488,7 @@ window.__interviewHelper = {
   openCodeExercise,
   extractCodeExercise,
   applyDemoPreset,
+  handleDemoFill,
   loadDemoCatalog,
   getDemoCatalog() {
     return demoCatalog;
@@ -2149,10 +2515,9 @@ window.__interviewHelper = {
   },
 };
 
-document.querySelectorAll("[data-demo]").forEach((button) => {
-  button.addEventListener("click", () => {
-    void handleDemoClick(button.dataset.demo);
-  });
+document.querySelector("#demo-fill")?.addEventListener("click", () => {
+  void handleDemoFill();
 });
 void loadDemoCatalog();
+void loadRoleOptions();
 bootMockCodeExercise();

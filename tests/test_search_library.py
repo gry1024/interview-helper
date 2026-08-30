@@ -30,5 +30,7 @@ def test_empty_query_fails_cleanly() -> None:
 def test_public_hint_has_no_raw_dump() -> None:
     result = search_library("KV cache", kind="interview")
     public = result.for_public()
-    assert "检索面经" in public
+    assert "检索到" in public
+    assert "条面经" in public
     assert "http" not in public
+    assert "项目总览" not in public

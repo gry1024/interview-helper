@@ -38,5 +38,7 @@ def test_report_prompt_requires_calibration() -> None:
     assert "真懂" in prompt
     assert "真不懂" in prompt
     assert "禁止默认「懂但讲不出」" in prompt
+    assert "naive" in prompt or "toy" in prompt
+    assert "升格" in prompt
     assert "rerank" in prompt
     assert "万卡" in prompt
