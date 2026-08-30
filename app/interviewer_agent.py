@@ -16,6 +16,8 @@ from app.agent import (
     MIN_INTERVIEWER_BEFORE_ABANDON,
     MIN_STUCK_BEFORE_ABANDON,
     MIN_TURNS_BEFORE_GOAL_DONE,
+    MIN_USER_TURNS_BEFORE_EXERCISE,
+    MAX_EXERCISES_PER_SESSION,
     STUCK_MARKERS,
     TURN_JSON_CONTRACT,
     build_turn_system_prompt,
@@ -113,16 +115,28 @@ def build_interviewer_agent_payload(role: str | None = None) -> dict[str, Any]:
             "text": "命中这些说法视为「不懂」，第一次不得切方向。",
         },
         {
+            "id": "min_user_turns_before_exercise",
+            "value": MIN_USER_TURNS_BEFORE_EXERCISE,
+            "source": "app/agent.py:MIN_USER_TURNS_BEFORE_EXERCISE",
+            "text": f"学生有效回答未满 {MIN_USER_TURNS_BEFORE_EXERCISE} 轮，服务端禁止打开手撕。",
+        },
+        {
+            "id": "max_exercises_per_session",
+            "value": MAX_EXERCISES_PER_SESSION,
+            "source": "app/agent.py:MAX_EXERCISES_PER_SESSION",
+            "text": f"整场成功打开手撕不超过 {MAX_EXERCISES_PER_SESSION} 次；失败或无题面不算。",
+        },
+        {
             "id": "first_question_overview",
             "value": "d1 必须是项目总览",
-            "source": "app/agent.py:plan_directions",
+            "source": "app.agent.py:plan_directions",
             "text": "开场 d1 必须是项目总览，第一问禁止跳进公式。",
         },
         {
             "id": "search_library_on_topic",
             "value": True,
             "source": "app/prompts/interviewer.md 与 app/agent.py:run_turn",
-            "text": "每轮按当前话题检索面经，条数不固定，没有相关命中就空着。过程句不当检索词。只改写原问。",
+            "text": "每轮按当前话题强制检索面经，最多 5 条短摘录。过程句不当检索词。只改写原问。模型不再调用 search_library。",
         },
         {
             "id": "no_code_coordinates",
@@ -157,9 +171,9 @@ def build_interviewer_agent_payload(role: str | None = None) -> dict[str, Any]:
             "name": "按需工具",
             "source": "app/prompts/interviewer.md 与 app/tools/",
             "text": (
-                "search_library：每轮按当前话题检索，相关才返回，条数不固定。"
+                "search_library：每轮服务端强制检索，最多 5 条。模型不再调用。"
                 "code_inspect：核仓库真伪，不把坐标念给学生。"
-                "code_exercise：面经里提到的相关手撕才打开编辑器，禁止现场编无关算法题。"
+                "code_exercise：学生有效回答满 5 轮且本场成功出题未满 2 次，面经里提到的相关手撕才打开编辑器；失败不出假进度。"
             ),
         },
     ]
@@ -185,9 +199,9 @@ def build_interviewer_agent_payload(role: str | None = None) -> dict[str, Any]:
         "skills": skills,
         "runtime_rules": runtime_rules,
         "when_to_call": {
-            "search_library": "每轮按当前话题检索；相关 0～10 条；过程句不当检索词。",
+            "search_library": "每轮服务端强制检索；最多 5 条；过程句不当检索词；模型不要再调。",
             "code_inspect": "学生吹了仓库可能对不上的能力，或需要核对真伪/决定同方向怎么引。",
-            "code_exercise": "当前话题属于面经提到的相关手撕，且要核实会不会写；无相关面经则口头问。",
+            "code_exercise": "满 5 轮学生回答且本场成功出题未满 2 次，当前话题属于面经相关手撕才打开；无匹配则口头问。",
         },
         "role_label": role_label(selected),
     }
