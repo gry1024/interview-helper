@@ -169,3 +169,69 @@ def complete_json_with_tools(
         return _parse_json_object(content)
 
     raise LLMError("MiniMax did not return a JSON object after tools")
+
+
+def complete_text_with_tools(
+    system_prompt: str,
+    user_prompt: str,
+    *,
+    tools: list[dict[str, Any]],
+    run_tool: ToolRunner,
+    max_tool_rounds: int = 2,
+) -> str:
+    """Tool-enabled completion that returns the final markdown/text body."""
+
+    messages: list[dict[str, Any]] = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_prompt},
+    ]
+
+    for round_index in range(max_tool_rounds + 1):
+        use_tools = tools if round_index < max_tool_rounds else None
+        response = _create_completion(messages, use_tools)
+        message = response.choices[0].message
+        tool_calls = list(getattr(message, "tool_calls", None) or [])
+
+        if tool_calls and round_index < max_tool_rounds:
+            serialized_calls: list[dict[str, Any]] = []
+            tool_messages: list[dict[str, Any]] = []
+            for index, call in enumerate(tool_calls):
+                function = getattr(call, "function", None)
+                name = getattr(function, "name", None) or "code_inspect"
+                raw_args = getattr(function, "arguments", None)
+                call_id = getattr(call, "id", None) or f"call_{index}"
+                serialized_calls.append(
+                    {
+                        "id": call_id,
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "arguments": raw_args
+                            if isinstance(raw_args, str)
+                            else json.dumps(raw_args or {}, ensure_ascii=False),
+                        },
+                    }
+                )
+                tool_messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": run_tool(name, _parse_tool_arguments(raw_args)),
+                    }
+                )
+            messages.append(
+                {
+                    "role": "assistant",
+                    "content": _message_content(message) or None,
+                    "tool_calls": serialized_calls,
+                }
+            )
+            messages.extend(tool_messages)
+            continue
+
+        content = _message_content(message)
+        if not content.strip():
+            raise LLMError("MiniMax returned an empty response")
+        return content
+
+    raise LLMError("MiniMax did not return text after tools")

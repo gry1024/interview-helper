@@ -58,6 +58,9 @@ def init_db() -> None:
             )
             """
         )
+        from app.db_reviews import init_reviews_table
+
+        init_reviews_table(connection)
         connection.commit()
 
 
@@ -218,3 +221,43 @@ def append_turn_bundle(
             (next_direction_id, session_id),
         )
         connection.commit()
+
+
+def mark_session_ended(session_id: str) -> None:
+    """Mark a session ended. Prefer save_review_and_end_session for the real path."""
+
+    with _write_lock, closing(connect()) as connection:
+        connection.execute(
+            "UPDATE sessions SET status = 'ended' WHERE id = ?",
+            (session_id,),
+        )
+        connection.commit()
+
+
+def save_review_and_end_session(
+    *,
+    session_id: str,
+    report_text: str,
+    snapshot_json: str,
+    review_id: str | None = None,
+) -> dict[str, Any]:
+    """Freeze the review then set status=ended in the same write transaction."""
+
+    from app.db_reviews import save_review
+
+    with _write_lock, closing(connect()) as connection:
+        review = save_review(
+            session_id=session_id,
+            report_text=report_text,
+            snapshot_json=snapshot_json,
+            review_id=review_id,
+            connection=connection,
+        )
+        cursor = connection.execute(
+            "UPDATE sessions SET status = 'ended' WHERE id = ?",
+            (session_id,),
+        )
+        if cursor.rowcount != 1:
+            raise ValueError(f"session {session_id} 无法标记为已结束")
+        connection.commit()
+    return review

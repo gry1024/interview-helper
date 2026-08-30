@@ -12,19 +12,22 @@ from typing import Any, AsyncIterator
 from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException, Request, status
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.agent import plan_directions, run_turn
+from app.agent import plan_directions, run_turn, write_report
 from app.db import (
     append_turn_bundle,
     create_session,
     get_session,
     init_db,
     list_turns,
+    save_review_and_end_session,
 )
+from app.db_reviews import get_review, list_reviews
 from app.llm import LLMError
 from app.models import DirectionPlan, SessionCreate, SessionCreated, TurnCreate
+from app.report import dump_end_snapshot
 from app.repository import (
     CloneResult,
     cleanup_session_repo,
@@ -283,6 +286,100 @@ async def create_turn(
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
+    )
+
+
+@app.post("/api/sessions/{session_id}/end")
+async def end_session(session_id: str, request: Request) -> StreamingResponse:
+    """Generate the end report, freeze the snapshot, and mark the session ended."""
+
+    _enforce_write_rate_limit(request)
+    session = await asyncio.to_thread(get_session, session_id)
+    if session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="会话不存在")
+    if session["status"] not in {"ready", "live"}:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="会话已结束，无法再次生成报告",
+        )
+    if session_id in _active_turns:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="本场已有一轮回答正在处理",
+        )
+
+    _active_turns.add(session_id)
+
+    async def event_stream() -> AsyncIterator[str]:
+        try:
+            yield ": preparing-report\n\n"
+            turns = await asyncio.to_thread(list_turns, session_id)
+            try:
+                report_text, tool_bundle = await asyncio.to_thread(
+                    write_report,
+                    session,
+                    turns,
+                )
+                snapshot_json = dump_end_snapshot(session, turns, report_text)
+                await asyncio.to_thread(
+                    save_review_and_end_session,
+                    session_id=session_id,
+                    report_text=report_text,
+                    snapshot_json=snapshot_json,
+                )
+            except LLMError:
+                yield _sse("error", {"message": "MiniMax 暂时无法生成报告，请稍后重试"})
+                yield _sse("done", {})
+                return
+            except Exception:
+                logger.exception("end report stream failed")
+                yield _sse("error", {"message": "结束报告生成失败，请稍后重试"})
+                yield _sse("done", {})
+                return
+
+            for event in tool_bundle.get("events") or []:
+                yield _sse_tool(
+                    event.get("name") or "code_inspect",
+                    event.get("args") or {},
+                    event.get("result") or "",
+                )
+
+            for chunk in _chunk_thought(report_text):
+                yield _sse("report_delta", {"text": chunk})
+                await asyncio.sleep(0.02)
+
+            yield _sse("done", {})
+        finally:
+            _active_turns.discard(session_id)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@app.get("/api/reviews")
+async def read_reviews() -> list[dict[str, str]]:
+    """List frozen reviews. Preview is derived at read time; nothing is rewritten."""
+
+    return await asyncio.to_thread(list_reviews)
+
+
+@app.get("/api/reviews/{review_id}")
+async def read_review(review_id: str) -> Response:
+    """Return the stored snapshot_json string as-is. Do not re-serialize."""
+
+    row = await asyncio.to_thread(get_review, review_id)
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="复盘不存在")
+    return Response(
+        content=row["snapshot_json"],
+        media_type="application/json; charset=utf-8",
     )
 
 
