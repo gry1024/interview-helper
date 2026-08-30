@@ -43,6 +43,21 @@ def init_db() -> None:
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS turns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                role TEXT NOT NULL
+                    CHECK (role IN ('interviewer', 'user', 'thought')),
+                body TEXT NOT NULL,
+                direction_id TEXT,
+                meta_json TEXT,
+                UNIQUE(session_id, seq)
+            )
+            """
+        )
         connection.commit()
 
 
@@ -88,6 +103,22 @@ def create_session(
                 first_question,
             ),
         )
+        connection.execute(
+            """
+            INSERT INTO turns (
+                session_id, seq, role, body, direction_id, meta_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                session_id,
+                0,
+                "interviewer",
+                first_question,
+                directions[0]["id"],
+                None,
+            ),
+        )
         connection.commit()
 
 
@@ -105,3 +136,85 @@ def get_session(session_id: str) -> dict[str, Any] | None:
     session["directions"] = json.loads(session.pop("directions_json"))
     session["clone_ok"] = bool(session["clone_ok"])
     return session
+
+
+def list_turns(session_id: str) -> list[dict[str, Any]]:
+    with closing(connect()) as connection:
+        rows = connection.execute(
+            """
+            SELECT * FROM turns
+            WHERE session_id = ?
+            ORDER BY seq ASC
+            """,
+            (session_id,),
+        ).fetchall()
+
+    turns: list[dict[str, Any]] = []
+    for row in rows:
+        turn = dict(row)
+        turn["meta"] = json.loads(turn.pop("meta_json") or "null")
+        turns.append(turn)
+    return turns
+
+
+def append_turn_bundle(
+    *,
+    session_id: str,
+    user_answer: str,
+    thought: str,
+    next_question: str,
+    direction_id: str,
+    next_direction_id: str,
+    meta: list[dict[str, Any]] | None = None,
+) -> None:
+    meta_json = (
+        json.dumps(meta, ensure_ascii=False, separators=(",", ":"))
+        if meta
+        else None
+    )
+
+    with _write_lock, closing(connect()) as connection:
+        current_seq = connection.execute(
+            "SELECT COALESCE(MAX(seq), -1) FROM turns WHERE session_id = ?",
+            (session_id,),
+        ).fetchone()[0]
+        user_seq = current_seq + 1
+        thought_seq = current_seq + 2
+        question_seq = current_seq + 3
+
+        connection.execute(
+            """
+            INSERT INTO turns (
+                session_id, seq, role, body, direction_id, meta_json
+            )
+            VALUES (?, ?, 'user', ?, ?, NULL)
+            """,
+            (session_id, user_seq, user_answer, direction_id),
+        )
+        connection.execute(
+            """
+            INSERT INTO turns (
+                session_id, seq, role, body, direction_id, meta_json
+            )
+            VALUES (?, ?, 'thought', ?, ?, ?)
+            """,
+            (session_id, thought_seq, thought, direction_id, meta_json),
+        )
+        connection.execute(
+            """
+            INSERT INTO turns (
+                session_id, seq, role, body, direction_id, meta_json
+            )
+            VALUES (?, ?, 'interviewer', ?, ?, NULL)
+            """,
+            (session_id, question_seq, next_question, next_direction_id),
+        )
+        connection.execute(
+            """
+            UPDATE sessions
+            SET current_direction_id = ?, status = 'live'
+            WHERE id = ?
+            """,
+            (next_direction_id, session_id),
+        )
+        connection.commit()

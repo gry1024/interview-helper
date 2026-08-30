@@ -85,3 +85,45 @@ class SessionCreated(BaseModel):
     first_question: str
     clone_ok: bool
     clone_error: str | None
+
+
+class TurnCreate(BaseModel):
+    answer: str = Field(min_length=1, max_length=8000)
+
+    @field_validator("answer")
+    @classmethod
+    def validate_answer(cls, value: str) -> str:
+        return _validate_user_text(value, "回答")
+
+
+class TurnResult(BaseModel):
+    thought: str = Field(min_length=8, max_length=4000)
+    direction_done: bool
+    next_question: str = Field(min_length=4, max_length=220)
+
+    @field_validator("thought", "next_question")
+    @classmethod
+    def validate_text(cls, value: str) -> str:
+        return _validate_user_text(value, "轮次内容")
+
+    @field_validator("next_question")
+    @classmethod
+    def validate_next_question(cls, value: str) -> str:
+        cleaned = _validate_user_text(value, "下一问")
+        if CODE_COORDINATE.search(cleaned):
+            raise ValueError("下一问不能包含代码文件名或行号")
+        return cleaned
+
+    @model_validator(mode="after")
+    def validate_thought_structure(self) -> "TurnResult":
+        lowered = self.thought.lower()
+        if "评价" not in self.thought:
+            raise ValueError("思考必须包含评价")
+        if "查代码" not in self.thought and "查代码" not in lowered:
+            raise ValueError("思考必须说明是否查代码")
+        if "本方向结束" not in self.thought:
+            raise ValueError("思考必须说明本方向是否结束")
+        forbidden = ("建议你", "总评", "复习", "岗位本质对照")
+        if any(token in self.thought for token in forbidden):
+            raise ValueError("思考不能包含建议或总评")
+        return self
