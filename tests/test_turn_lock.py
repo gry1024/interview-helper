@@ -18,13 +18,14 @@ DIRECTIONS = [
 ]
 
 
-def _session(*, current_direction_id: str = "d1") -> dict:
+def _session(*, current_direction_id: str = "d1", clone_ok: bool = False) -> dict:
     return {
         "id": "session-lock",
         "role": "llm-algo",
         "statement": "复现了 RoPE、RMSNorm 与 SwiGLU。",
         "directions": DIRECTIONS,
         "current_direction_id": current_direction_id,
+        "clone_ok": clone_ok,
     }
 
 
@@ -108,13 +109,13 @@ def test_explicitly_stuck_answer_may_finish_a_direction() -> None:
 
 def test_run_turn_overrides_model_skip_on_shallow_answer(monkeypatch) -> None:
     monkeypatch.setattr(
-        "app.agent.complete_json",
+        "app.agent.complete_json_with_tools",
         lambda *_args, **_kwargs: _model_turn(
             direction_done=True,
             next_question="预训练和 SFT 之间损失怎么接？",
         ),
     )
-    result, next_id = run_turn(
+    result, next_id, tools = run_turn(
         session=_session(),
         turns=[
             {
@@ -126,17 +127,19 @@ def test_run_turn_overrides_model_skip_on_shallow_answer(monkeypatch) -> None:
     )
     assert result.direction_done is False
     assert next_id == "d1"
+    assert tools["events"] == []
+    assert tools["meta"] == []
 
 
 def test_run_turn_switches_after_a_complete_answer(monkeypatch) -> None:
     monkeypatch.setattr(
-        "app.agent.complete_json",
+        "app.agent.complete_json_with_tools",
         lambda *_args, **_kwargs: _model_turn(
             direction_done=True,
             next_question="预训练和 SFT 之间损失怎么接？",
         ),
     )
-    result, next_id = run_turn(
+    result, next_id, tools = run_turn(
         session=_session(),
         turns=[
             {
@@ -151,6 +154,7 @@ def test_run_turn_switches_after_a_complete_answer(monkeypatch) -> None:
     )
     assert result.direction_done is True
     assert next_id == "d2"
+    assert tools["events"] == []
 
 
 def _seed_session(session_id: str = "session-sse") -> None:
@@ -179,7 +183,10 @@ def test_turns_endpoint_streams_required_sse_events(
     fake = TurnResult.model_validate(
         _model_turn(direction_done=False, next_question="RoPE 具体旋转的是哪一部分？")
     )
-    monkeypatch.setattr("app.main.run_turn", lambda **_kwargs: (fake, "d1"))
+    monkeypatch.setattr(
+        "app.main.run_turn",
+        lambda **_kwargs: (fake, "d1", {"events": [], "meta": []}),
+    )
 
     with TestClient(main_mod.app) as client:
         response = client.post(
@@ -195,6 +202,84 @@ def test_turns_endpoint_streams_required_sse_events(
     assert "event: done" in body
     assert "event: error" not in body
     assert "RoPE 具体旋转的是哪一部分？" in body
+
+
+def test_turns_endpoint_can_stream_tool_events(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "app.db")
+    db.init_db()
+    _seed_session("session-sse-tool")
+    main_mod._write_requests.clear()
+    main_mod._active_turns.clear()
+
+    fake = TurnResult.model_validate(
+        _model_turn(direction_done=False, next_question="RoPE 具体旋转的是哪一部分？")
+    )
+    public = "仓库未体现这些实现陈述：rerank、万卡。追问只谈能力与证据，不要点名文件或行号。"
+    model_text = "ok=true\nconclusion=仓库中未体现：rerank、万卡。\ninternal_excerpt:\nmodel.py:12"
+    monkeypatch.setattr(
+        "app.main.run_turn",
+        lambda **_kwargs: (
+            fake,
+            "d1",
+            {
+                "events": [
+                    {
+                        "name": "code_inspect",
+                        "args": {"query": "rerank 万卡"},
+                        "result": public,
+                    }
+                ],
+                "meta": [
+                    {
+                        "name": "code_inspect",
+                        "args": {"query": "rerank 万卡"},
+                        "result": model_text,
+                    }
+                ],
+            },
+        ),
+    )
+
+    with TestClient(main_mod.app) as client:
+        response = client.post(
+            "/api/sessions/session-sse-tool/turns",
+            json={"answer": "我还做了 rerank 和分布式万卡训练"},
+        )
+
+    assert response.status_code == 200
+    body = response.text
+    assert "event: tool" in body
+    assert "event: thought_delta" in body
+    assert "event: question" in body
+    assert "code_inspect" in body
+    assert "仓库未体现" in body
+    assert "RoPE 具体旋转的是哪一部分？" in body
+    assert "model.py:12" not in body.split("event: question")[-1]
+
+    turns = db.list_turns("session-sse-tool")
+    thought = next(item for item in turns if item["role"] == "thought")
+    assert thought["meta"][0]["name"] == "code_inspect"
+    assert "internal_excerpt" in thought["meta"][0]["result"]
+
+
+def test_turn_result_rejects_filename_line_in_next_question() -> None:
+    from pydantic import ValidationError
+
+    try:
+        TurnResult.model_validate(
+            {
+                "thought": "评价：虚。\n查代码：是\n本方向结束：否，因为还在当前方向。",
+                "direction_done": False,
+                "next_question": "请看 model.py:12 的 RoPE 实现？",
+            }
+        )
+    except ValidationError as exc:
+        assert "文件名或行号" in str(exc)
+    else:
+        raise AssertionError("next_question with coordinates must be rejected")
 
 
 def test_turn_result_allows_a_longer_but_single_next_question() -> None:

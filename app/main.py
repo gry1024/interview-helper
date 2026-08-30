@@ -184,7 +184,7 @@ def _sse(event: str, data: dict[str, Any]) -> str:
 
 
 def _sse_tool(name: str, args: dict[str, Any], result: str) -> str:
-    """Reserve the step-4 tool event shape; step 3 does not emit it yet."""
+    """Emit a candidate-safe tool event; excerpts stay in meta_json."""
 
     return _sse("tool", {"name": name, "args": args, "result": result})
 
@@ -223,7 +223,7 @@ async def create_turn(
         try:
             turns = await asyncio.to_thread(list_turns, session_id)
             try:
-                result, next_direction_id = await asyncio.to_thread(
+                result, next_direction_id, tool_bundle = await asyncio.to_thread(
                     run_turn,
                     session=session,
                     turns=turns,
@@ -239,6 +239,15 @@ async def create_turn(
                 yield _sse("done", {})
                 return
 
+            tool_events = tool_bundle.get("events") or []
+            tool_meta = tool_bundle.get("meta") or []
+            for event in tool_events:
+                yield _sse_tool(
+                    event.get("name") or "code_inspect",
+                    event.get("args") or {},
+                    event.get("result") or "",
+                )
+
             for chunk in _chunk_thought(result.thought):
                 yield _sse("thought_delta", {"text": chunk})
                 await asyncio.sleep(0.02)
@@ -251,7 +260,7 @@ async def create_turn(
                 next_question=result.next_question,
                 direction_id=session["current_direction_id"],
                 next_direction_id=next_direction_id,
-                meta=None,
+                meta=tool_meta or None,
             )
 
             yield _sse(

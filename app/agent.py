@@ -7,8 +7,12 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from app.llm import LLMError, complete_json
+from app.llm import LLMError, complete_json, complete_json_with_tools
 from app.models import DirectionPlan, TurnResult
+from app.tools.code_inspect import (
+    CODE_INSPECT_TOOL,
+    run_code_inspect_from_tool_args,
+)
 
 
 APP_DIR = Path(__file__).resolve().parent
@@ -166,13 +170,25 @@ def apply_topic_lock(
     return True, next_direction_id
 
 
+def _merge_tool_into_thought(thought: str, public_bits: list[str]) -> str:
+    """Keep thought candidate-safe while recording that a tool actually ran."""
+
+    if "查代码：否" in thought:
+        thought = thought.replace("查代码：否", "查代码：是", 1)
+    extra = "\n".join(bit for bit in public_bits if bit and bit not in thought)
+    if not extra:
+        return thought
+    merged = thought.rstrip() + "\n" + extra
+    return merged if len(merged) <= 4000 else thought
+
+
 def run_turn(
     *,
     session: dict[str, Any],
     turns: list[dict[str, Any]],
     answer: str,
-) -> tuple[TurnResult, str]:
-    """Produce one locked-topic turn without inventing new directions."""
+) -> tuple[TurnResult, str, dict[str, list[dict[str, Any]]]]:
+    """Produce one locked-topic turn; call code_inspect when the model asks."""
 
     interviewer = (APP_DIR / "prompts" / "interviewer.md").read_text(encoding="utf-8")
     job_essence = (APP_DIR / "prompts" / "job_essence.md").read_text(encoding="utf-8")
@@ -195,13 +211,15 @@ def run_turn(
 当前方向 title：{current_direction["title"]}
 当前方向 goal：{current_direction["goal"]}
 
-仓库不在上下文中。本步默认不查代码；thought 必须写“查代码：否”。
+仓库不在上下文中。要核对真伪或决定同方向怎么引，就调用 code_inspect。
+禁止把路径、文件名或行号写入 next_question；tool 结果只影响评价和引导，不得念出坐标。
+clone 不可用时 tool 会返回仓库不可用，面试继续，不要假装看过代码。
 浅答、短答、只复述术语时，direction_done 必须是 false，next_question 必须仍锁在当前方向。
 只有学生明确表示不会/不知道且换说法仍空白，或当前 goal 链路已经问完，才允许 direction_done=true。
 direction_done=true 时，下一问只能是下一条已定方向的第一步；没有下一条就收束，禁止发明 d6 或任何新主线。
 最终只输出合法 JSON：
 {{
-  "thought": "评价……\\n查代码：否……\\n本方向结束：是/否，因为……",
+  "thought": "评价……\\n查代码：是/否……\\n本方向结束：是/否，因为……",
   "direction_done": false,
   "next_question": "……"
 }}
@@ -215,13 +233,41 @@ direction_done=true 时，下一问只能是下一条已定方向的第一步；
 {json.dumps(answer, ensure_ascii=False)}
 
 请只锁在当前方向继续深挖。答得差也只换更朴素的说法，不要跳方向，不要发明新方向，不要给建议或总评。
+若回答声称了仓库里可能对不上的实现（例如 rerank、万卡分布式训练），先调用 code_inspect 再出下一问。
 """.strip()
 
     result: TurnResult | None = None
     last_error: Exception | None = None
     retry_hint = ""
+    tool_events: list[dict[str, Any]] = []
+    tool_meta: list[dict[str, Any]] = []
+
+    def run_tool(name: str, args: dict[str, Any]) -> str:
+        if name != "code_inspect":
+            text = "未知 tool，忽略。"
+            tool_meta.append({"name": name, "args": args, "result": text})
+            tool_events.append({"name": name, "args": args, "result": text})
+            return text
+        inspect = run_code_inspect_from_tool_args(
+            session["id"],
+            args,
+            clone_ok=session.get("clone_ok"),
+        )
+        model_text = inspect.for_model()
+        public_text = inspect.for_public()
+        tool_meta.append({"name": name, "args": args, "result": model_text})
+        tool_events.append({"name": name, "args": args, "result": public_text})
+        return model_text
+
     for _attempt in range(2):
-        raw_result = complete_json(system_prompt, user_prompt + retry_hint)
+        tool_events.clear()
+        tool_meta.clear()
+        raw_result = complete_json_with_tools(
+            system_prompt,
+            user_prompt + retry_hint,
+            tools=[CODE_INSPECT_TOOL],
+            run_tool=run_tool,
+        )
         try:
             result = TurnResult.model_validate(raw_result)
             break
@@ -236,6 +282,16 @@ direction_done=true 时，下一问只能是下一条已定方向的第一步；
     if result is None:
         raise LLMError("MiniMax turn result did not match the contract") from last_error
 
+    if tool_events:
+        result = result.model_copy(
+            update={
+                "thought": _merge_tool_into_thought(
+                    result.thought,
+                    [event.get("result", "") for event in tool_events],
+                )
+            }
+        )
+
     locked_done, next_direction_id = apply_topic_lock(
         directions=directions,
         current_direction_id=current_direction_id,
@@ -244,23 +300,15 @@ direction_done=true 时，下一问只能是下一条已定方向的第一步；
     )
     if locked_done != result.direction_done:
         result = result.model_copy(update={"direction_done": locked_done})
-    return result, next_direction_id
+    return result, next_direction_id, {"events": tool_events, "meta": tool_meta}
 
 
 def build_code_inspect_event(
     session: dict[str, Any],
     query: str,
     path_hint: str | None = None,
-) -> dict[str, Any] | None:
-    """Wrap the isolated code_inspect tool as an SSE `tool` payload.
-
-    Step 3 keeps the default path at “查代码：否” and does not call this.
-    """
-
-    try:
-        from app.tools.code_inspect import run_code_inspect_from_tool_args
-    except ImportError:
-        return None
+) -> dict[str, Any]:
+    """Wrap the isolated code_inspect tool as an SSE `tool` payload."""
 
     inspect = run_code_inspect_from_tool_args(
         session["id"],
