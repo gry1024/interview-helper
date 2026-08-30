@@ -183,6 +183,12 @@ def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
+def _sse_tool(name: str, args: dict[str, Any], result: str) -> str:
+    """Reserve the step-4 tool event shape; step 3 does not emit it yet."""
+
+    return _sse("tool", {"name": name, "args": args, "result": result})
+
+
 def _chunk_thought(thought: str) -> list[str]:
     pieces = [piece for piece in _THOUGHT_SPLIT.split(thought) if piece]
     return pieces or [thought]

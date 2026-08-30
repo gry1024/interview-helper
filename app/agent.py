@@ -245,3 +245,30 @@ direction_done=true 时，下一问只能是下一条已定方向的第一步；
     if locked_done != result.direction_done:
         result = result.model_copy(update={"direction_done": locked_done})
     return result, next_direction_id
+
+
+def build_code_inspect_event(
+    session: dict[str, Any],
+    query: str,
+    path_hint: str | None = None,
+) -> dict[str, Any] | None:
+    """Wrap the isolated code_inspect tool as an SSE `tool` payload.
+
+    Step 3 keeps the default path at “查代码：否” and does not call this.
+    """
+
+    try:
+        from app.tools.code_inspect import run_code_inspect_from_tool_args
+    except ImportError:
+        return None
+
+    inspect = run_code_inspect_from_tool_args(
+        session["id"],
+        {"query": query, "path_hint": path_hint or ""},
+        clone_ok=session.get("clone_ok"),
+    )
+    return {
+        "name": "code_inspect",
+        "args": {"query": query, "path_hint": path_hint},
+        "result": inspect.for_public(),
+    }
