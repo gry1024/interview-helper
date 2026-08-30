@@ -216,7 +216,6 @@ STUCK_MARKERS = (
     "没有深入思考过",
     "没深入思考过",
     "没深入想过",
-    "希望交流",
 )
 STUCK_TEACH_MARK = "先讲清："
 EMPTY_REPHRASE_RE = re.compile(r"换个更朴素的说法|换个说法再问|换个说法：")
@@ -269,7 +268,12 @@ def _direction_ids(directions: list[dict[str, str]]) -> list[str]:
 def is_stuck_answer(answer: str) -> bool:
     """True when the student says they do not know this step."""
 
-    return any(marker in answer for marker in STUCK_MARKERS)
+    text = (answer or "").strip()
+    if not any(marker in text for marker in STUCK_MARKERS):
+        return False
+    if len(text) >= 80 and any(marker in text for marker in MECHANISM_MARKERS):
+        return False
+    return True
 
 
 def is_shallow_answer(answer: str) -> bool:
@@ -518,13 +522,176 @@ def _rewrite_direction_open(thought: str, reason: str) -> str:
     return "\n".join(output)
 
 
-def _stay_next_question(direction: dict[str, str], answer: str) -> str:
+GENERIC_STAY_RE = re.compile(
+    r"还在「[^」]*」上。请接着上一问，把下一步机制讲具体"
+)
+HOLLOW_STUCK_CHARS = 80
+CONTRACT_ECHO = re.compile(
+    r"必须只问一个微步骤|只问一个微步骤|next_question 必填|必须给出 next_question"
+)
+
+
+def _clean_question_text(text: str) -> str:
+    cleaned = re.sub(r"\s+", " ", (text or "").strip())
+    return CODE_COORDINATE.sub("", cleaned).strip(" ，,;；")
+
+
+def _strip_broad_tokens(text: str) -> str:
+    stripped = BROAD_TURN_QUESTION.sub("", text or "")
+    stripped = re.sub(r"\s+", " ", stripped)
+    stripped = re.sub(r"[，,;；]{2,}", "，", stripped)
+    return stripped.strip(" ，,;；")
+
+
+def _first_question_only(text: str) -> str:
+    if (text or "").count("？") + (text or "").count("?") <= 1:
+        return text or ""
+    first = re.split(r"[？?]", text, maxsplit=1)[0].strip()
+    return f"{first}？" if first else ""
+
+
+def _looks_like_generic_stay(text: str) -> bool:
+    raw = (text or "").strip()
+    if GENERIC_STAY_RE.search(raw):
+        return True
+    return raw in {
+        "那你项目里这一步实际怎么接？",
+        "这一步在你项目里先碰到哪个对象？",
+        "先说这一步的输入是什么、输出变成什么？",
+    }
+
+
+def _finish_oral_question(text: str) -> str:
+    cleaned = _first_question_only(_clean_question_text(text))
+    if CONTRACT_ECHO.search(cleaned):
+        return ""
+    if BROAD_TURN_QUESTION.search(cleaned):
+        cleaned = _strip_broad_tokens(cleaned)
+    cleaned = CONTRACT_ECHO.sub("", cleaned).strip(" ，,;；")
+    if len(cleaned) < 4:
+        return ""
+    if not cleaned.endswith("？") and not cleaned.endswith("?"):
+        cleaned = f"{cleaned}？"
+    cleaned = cleaned[:240]
+    if cleaned.count("？") + cleaned.count("?") != 1:
+        return ""
+    if BROAD_TURN_QUESTION.search(cleaned) or CONTRACT_ECHO.search(cleaned):
+        return ""
+    return cleaned
+
+
+def _question_hook(last_question: str, *, title: str = "") -> str:
+    raw = last_question or ""
+    text = re.sub(r"[？?]+$", "", _clean_question_text(raw))
+    quoted = re.findall(r"「([^」]{4,56})」", text)
+    title_key = (title or "")[:20]
+    for item in quoted:
+        if title_key and item[:20] == title_key:
+            continue
+        if "请接着上一问" in item or "把下一步机制" in item:
+            continue
+        stripped = _strip_broad_tokens(item)
+        if len(stripped) >= 4:
+            return stripped[:56]
+    if _looks_like_generic_stay(raw) or "请接着上一问" in text:
+        return ""
+    stripped = _strip_broad_tokens(text)
+    stripped = CONTRACT_ECHO.sub("", stripped).strip(" ，,;；")
+    return stripped[:56]
+
+
+def _stay_next_question(
+    direction: dict[str, str],
+    answer: str,
+    *,
+    last_question: str = "",
+    avoid: str = "",
+) -> str:
+    """One-shot salvage. Never reuse the previous interviewer question."""
+
     title = (direction.get("title") or "当前方向")[:20]
+    hook = _question_hook(last_question, title=title)
+    avoid_set = {
+        item.strip() for item in (avoid, last_question) if item and item.strip()
+    }
+    variants: list[str] = []
     if is_stuck_answer(answer):
-        text = "那你项目里这一步实际怎么接？"
+        if hook:
+            variants.extend(
+                [
+                    f"「{hook}」在你项目里实际接到哪一步？",
+                    f"先别管术语，「{hook}」的输入是什么、出来变成什么？",
+                    f"「{hook}」这一步，你代码里先碰到哪个对象？",
+                ]
+            )
+        variants.extend(
+            [
+                "那你项目里这一步实际怎么接？",
+                "这一步在你项目里先碰到哪个对象？",
+                "先说这一步的输入是什么、输出变成什么？",
+            ]
+        )
+    elif is_shallow_answer(answer):
+        if hook:
+            variants.extend(
+                [
+                    f"太短了。把「{hook}」里你实际做的那一下讲具体？",
+                    f"「{hook}」不要只报术语，这一步输入怎么变成输出？",
+                    f"还停在刚才这步：{hook}里，具体哪一个动作先发生？",
+                ]
+            )
+        variants.extend(
+            [
+                f"「{title}」先别换方向。上一问还没落地的那一步，具体怎么发生？",
+                f"停在「{title}」。刚才那问里，你下一步实际改了什么？",
+            ]
+        )
     else:
-        text = f"还在「{title}」上。请接着上一问，把下一步机制讲具体，不要跳到别的方向？"
-    return text[:240]
+        if hook:
+            variants.extend(
+                [
+                    f"「{hook}」之后，下一块具体怎么接？",
+                    f"刚才那步过了。沿着「{title}」，再往下走哪一个动作？",
+                    f"「{hook}」先别换方向，你下一步实际改了什么？",
+                ]
+            )
+        variants.extend(
+            [
+                f"「{title}」还没走完。上一问之后，下一步机制是什么？",
+                f"停在「{title}」。刚才那问之后，你实际先碰到什么？",
+            ]
+        )
+    for raw in variants:
+        finished = _finish_oral_question(raw)
+        if finished and finished not in avoid_set:
+            return finished
+    last_resort = _finish_oral_question(f"「{title}」这一步，你实际先碰到什么？")
+    if last_resort and last_resort not in avoid_set:
+        return last_resort
+    bumped = _finish_oral_question("这一步的输入张量和输出张量各是什么？")
+    if bumped and bumped not in avoid_set:
+        return bumped
+    return last_resort or "那你项目里这一步实际怎么接？"
+
+
+def _dedupe_stay_question(
+    question: str,
+    *,
+    direction: dict[str, str],
+    answer: str,
+    last_question: str,
+) -> str:
+    current = (question or "").strip()
+    last = (last_question or "").strip()
+    if not current:
+        return _stay_next_question(
+            direction, answer, last_question=last, avoid=last
+        )
+    if current != last:
+        return current
+    return _stay_next_question(
+        direction, answer, last_question=last, avoid=current
+    )
 
 
 def _exercise_followup_question(payload: Mapping[str, Any] | dict[str, Any]) -> str:
@@ -555,6 +722,18 @@ def _should_teach_stuck(
     return not _can_abandon_stuck(turns, direction_id, answers)
 
 
+def _should_skip_llm(
+    answer: str,
+    turns: list[dict[str, Any]] | None,
+    direction_id: str,
+) -> bool:
+    """Skip the model only for a short stuck reply; substance always goes to LLM."""
+
+    if not _should_teach_stuck(answer, turns, direction_id):
+        return False
+    return len((answer or "").strip()) < HOLLOW_STUCK_CHARS
+
+
 def _inject_stuck_teach(
     thought: str,
     *,
@@ -583,31 +762,36 @@ def _inject_stuck_teach(
     return "\n".join(output)
 
 
-CONTRACT_ECHO = re.compile(
-    r"必须只问一个微步骤|只问一个微步骤|next_question 必填|必须给出 next_question"
-)
-
-
 def sanitize_next_question(
     question: str,
     *,
     direction: dict[str, str],
     answer: str,
+    last_question: str = "",
 ) -> str:
     """Keep a single oral follow-up even if the model stacked questions."""
 
-    text = re.sub(r"\s+", " ", (question or "").strip())
-    text = CODE_COORDINATE.sub("", text).strip(" ，,;；")
-    if text.count("？") + text.count("?") > 1:
-        first = re.split(r"[？?]", text, maxsplit=1)[0].strip()
-        text = f"{first}？" if first else ""
-    if (
-        len(text) < 4
-        or BROAD_TURN_QUESTION.search(text)
-        or CONTRACT_ECHO.search(text)
-    ):
-        return _stay_next_question(direction, answer)
-    return text[:240]
+    text = _first_question_only(_clean_question_text(question))
+    if CONTRACT_ECHO.search(text):
+        return _stay_next_question(
+            direction, answer, last_question=last_question, avoid=last_question
+        )
+    if BROAD_TURN_QUESTION.search(text):
+        stripped = _strip_broad_tokens(text)
+        text = stripped if stripped.endswith(("？", "?")) else (
+            f"{stripped}？" if stripped else ""
+        )
+    finished = _finish_oral_question(text)
+    if finished:
+        return _dedupe_stay_question(
+            finished,
+            direction=direction,
+            answer=answer,
+            last_question=last_question,
+        )
+    return _stay_next_question(
+        direction, answer, last_question=last_question, avoid=last_question
+    )
 
 
 def coerce_turn_payload(
@@ -615,6 +799,7 @@ def coerce_turn_payload(
     *,
     direction: dict[str, str],
     answer: str,
+    last_question: str = "",
 ) -> dict[str, Any]:
     """Salvage a near-legal turn so thought is never left without a reply."""
 
@@ -634,13 +819,23 @@ def coerce_turn_payload(
             str(raw.get("next_question") or ""),
             direction=direction,
             answer=answer,
+            last_question=last_question,
         ),
     }
 
 
-def fallback_turn_result(direction: dict[str, str], answer: str) -> TurnResult:
+def fallback_turn_result(
+    direction: dict[str, str],
+    answer: str,
+    last_question: str = "",
+) -> TurnResult:
     return TurnResult.model_validate(
-        coerce_turn_payload({}, direction=direction, answer=answer)
+        coerce_turn_payload(
+            {},
+            direction=direction,
+            answer=answer,
+            last_question=last_question,
+        )
     )
 
 
@@ -1081,17 +1276,25 @@ def run_turn(
 下一问只问一件事，必须给出 next_question。
 """.strip()
 
-    skip_llm = _should_teach_stuck(answer, turns, current_direction_id)
+    last_question = _latest_interviewer_question(turns)
+    skip_llm = _should_skip_llm(answer, turns, current_direction_id)
     if skip_llm:
-        result = fallback_turn_result(current_direction, answer)
+        result = fallback_turn_result(
+            current_direction, answer, last_question=last_question
+        )
         result = result.model_copy(
             update={
                 "thought": _inject_stuck_teach(
                     result.thought,
                     direction=current_direction,
-                    last_question=_latest_interviewer_question(turns),
+                    last_question=last_question,
                 ),
-                "next_question": _stay_next_question(current_direction, answer),
+                "next_question": _stay_next_question(
+                    current_direction,
+                    answer,
+                    last_question=last_question,
+                    avoid=last_question,
+                ),
                 "direction_done": False,
             }
         )
@@ -1110,12 +1313,15 @@ def run_turn(
                     raw_result,
                     direction=current_direction,
                     answer=answer,
+                    last_question=last_question,
                 )
             )
         except (ValidationError, LLMError) as exc:
             last_error = exc
             logger.warning("turn fallback after failed contract: %s", last_error)
-            result = fallback_turn_result(current_direction, answer)
+            result = fallback_turn_result(
+                current_direction, answer, last_question=last_question
+            )
 
     result = result.model_copy(
         update={"thought": _align_thought_with_tools(result.thought, tool_events)}
@@ -1137,11 +1343,17 @@ def run_turn(
                 turns, current_direction_id, answers
             ),
         )
+        kept = _dedupe_stay_question(
+            result.next_question,
+            direction=current_direction,
+            answer=answer,
+            last_question=last_question,
+        )
         result = result.model_copy(
             update={
                 "direction_done": False,
                 "thought": _rewrite_direction_open(result.thought, reason),
-                "next_question": _stay_next_question(current_direction, answer),
+                "next_question": kept,
             }
         )
     elif END_ADVOCACY_RE.search(result.next_question):
@@ -1153,12 +1365,28 @@ def run_turn(
             "thought": _inject_stuck_teach(
                 result.thought,
                 direction=current_direction,
-                last_question=_latest_interviewer_question(turns),
+                last_question=last_question,
             )
         }
         if EMPTY_REPHRASE_RE.search(result.next_question or ""):
-            updates["next_question"] = _stay_next_question(current_direction, answer)
+            updates["next_question"] = _stay_next_question(
+                current_direction,
+                answer,
+                last_question=last_question,
+                avoid=last_question,
+            )
         result = result.model_copy(update=updates)
+
+    result = result.model_copy(
+        update={
+            "next_question": _dedupe_stay_question(
+                result.next_question,
+                direction=current_direction,
+                answer=answer,
+                last_question=last_question,
+            )
+        }
+    )
 
     opened_now = _opened_exercise_event(tool_events)
     if opened_now:

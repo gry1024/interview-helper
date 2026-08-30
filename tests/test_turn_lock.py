@@ -200,6 +200,8 @@ def test_run_turn_teaches_on_first_stuck_and_keeps_direction(monkeypatch) -> Non
     assert "总评" not in result.thought
     assert "换个更朴素的说法" not in result.next_question
     assert result.next_question.count("？") + result.next_question.count("?") == 1
+    assert "RoPE" in result.next_question or "旋转" in result.next_question
+    assert "不要跳到别的方向" not in result.next_question
 
 
 def test_second_stuck_after_rephrase_may_finish_a_direction() -> None:
@@ -319,7 +321,8 @@ def test_run_turn_keeps_direction_after_first_complete_answer(monkeypatch) -> No
     )
     assert result.direction_done is False
     assert next_id == "d1"
-    assert "不要跳到别的方向" in result.next_question
+    assert result.next_question == "预训练和 SFT 之间损失怎么接？"
+    assert "不要跳到别的方向" not in result.next_question
     assert any(event["name"] == "search_library" for event in tools["events"])
 
 
@@ -718,6 +721,9 @@ def test_coerce_empty_or_compound_next_question_still_replies() -> None:
         )
     )
     assert compound.next_question.count("？") + compound.next_question.count("?") <= 1
+    assert "缩放" not in compound.next_question
+    assert "QKV" in compound.next_question
+    assert "还在「" not in compound.next_question
     echo = TurnResult.model_validate(
         coerce_turn_payload(
             {
@@ -787,3 +793,199 @@ def test_ended_session_cannot_continue_turns(
         )
 
     assert response.status_code == 409
+
+
+def test_sanitize_keeps_first_of_two_questions() -> None:
+    from app.agent import sanitize_next_question
+
+    direction = DIRECTIONS[0]
+    kept = sanitize_next_question(
+        "QKV 分别来自哪？缩放又为什么除根号 d_k？",
+        direction=direction,
+        answer="旋的是 Q 和 K。",
+    )
+    assert kept.count("？") + kept.count("?") == 1
+    assert "缩放" not in kept
+    assert "QKV" in kept
+    assert "还在「" not in kept
+    assert "不要跳到别的方向" not in kept
+
+
+def test_sanitize_strips_broad_words_instead_of_replacing() -> None:
+    from app.agent import sanitize_next_question
+
+    direction = DIRECTIONS[0]
+    kept = sanitize_next_question(
+        "请分别讲清 QKV 来源以及 scaled 的原因？",
+        direction=direction,
+        answer="旋的是 Q 和 K。",
+    )
+    assert "QKV" in kept
+    assert "分别" not in kept
+    assert "请介绍" not in kept
+    assert "还在「" not in kept
+    assert kept.count("？") + kept.count("?") == 1
+
+
+def test_consecutive_stay_questions_must_differ() -> None:
+    from app.agent import _stay_next_question, fallback_turn_result
+
+    direction = {
+        "id": "d1",
+        "title": "项目总览与个人边界",
+        "goal": "问清做成了哪几块、边界在哪",
+    }
+    last = "先讲讲你这个项目主要做成了哪几块？"
+    first = _stay_next_question(
+        direction, "用了 RoPE 提升外推", last_question=last
+    )
+    second = _stay_next_question(
+        direction, "用了 RoPE 提升外推", last_question=first, avoid=first
+    )
+    assert first
+    assert second
+    assert first != second
+    assert first != last
+    fallback_a = fallback_turn_result(
+        direction, "用了 RoPE", last_question=first
+    )
+    fallback_b = fallback_turn_result(
+        direction, "用了 RoPE", last_question=fallback_a.next_question
+    )
+    assert fallback_a.next_question != fallback_b.next_question
+
+
+def test_shallow_and_complete_answers_do_not_both_become_stay(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.agent.complete_json_with_tools",
+        lambda *_args, **_kwargs: _model_turn(
+            direction_done=True,
+            next_question="预训练和 SFT 之间损失怎么接？",
+        ),
+    )
+    monkeypatch.setattr(
+        "app.agent.run_search_library_from_tool_args",
+        lambda *_args, **_kwargs: _fake_library(2),
+    )
+    turns = [
+        {
+            "role": "interviewer",
+            "body": "一个 token ID 进入模型后，先怎样变成 hidden state？",
+            "direction_id": "d1",
+        }
+    ]
+    shallow, shallow_id, _tools = run_turn(
+        session=_session(),
+        turns=turns,
+        answer="用了 RoPE 提升外推",
+    )
+    complete, complete_id, _tools = run_turn(
+        session=_session(),
+        turns=turns,
+        answer=COMPLETE_D1,
+    )
+    generic = "请接着上一问，把下一步机制讲具体，不要跳到别的方向"
+    assert shallow_id == "d1"
+    assert complete_id == "d1"
+    assert generic not in shallow.next_question
+    assert generic not in complete.next_question
+    assert complete.next_question == "预训练和 SFT 之间损失怎么接？"
+    assert complete.next_question.count("？") == 1
+
+
+def test_hope_to_talk_is_not_stuck_and_hits_llm(monkeypatch) -> None:
+    called = {"n": 0}
+
+    def fake_complete(*_args, **_kwargs):
+        called["n"] += 1
+        return _model_turn(
+            direction_done=False,
+            next_question="旋转作用在 Q 和 K 的哪一对维度？",
+        )
+
+    monkeypatch.setattr("app.agent.complete_json_with_tools", fake_complete)
+    monkeypatch.setattr(
+        "app.agent.run_search_library_from_tool_args",
+        lambda *_args, **_kwargs: _fake_library(0),
+    )
+    answer = "希望交流一下 RoPE，我先查表得到向量，再旋转 Q 和 K。"
+    assert is_stuck_answer(answer) is False
+    result, next_id, _tools = run_turn(
+        session=_session(),
+        turns=[
+            {
+                "role": "interviewer",
+                "body": "RoPE 具体旋转的是哪一部分？",
+                "direction_id": "d1",
+            }
+        ],
+        answer=answer,
+    )
+    assert called["n"] == 1
+    assert next_id == "d1"
+    assert result.next_question == "旋转作用在 Q 和 K 的哪一对维度？"
+
+
+def test_topic_lock_keeps_model_question_instead_of_generic_stay(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "app.agent.complete_json_with_tools",
+        lambda *_args, **_kwargs: _model_turn(
+            direction_done=True,
+            next_question="位置信息是怎样加进 embedding 的？",
+        ),
+    )
+    monkeypatch.setattr(
+        "app.agent.run_search_library_from_tool_args",
+        lambda *_args, **_kwargs: _fake_library(0),
+    )
+    result, next_id, _tools = run_turn(
+        session=_session(),
+        turns=[
+            {
+                "role": "interviewer",
+                "body": "一个 token ID 进入模型后，先怎样变成 hidden state？",
+                "direction_id": "d1",
+            }
+        ],
+        answer="先查表得到向量，再加位置。",
+    )
+    assert next_id == "d1"
+    assert result.direction_done is False
+    assert result.next_question == "位置信息是怎样加进 embedding 的？"
+    assert "不要跳到别的方向" not in result.next_question
+
+
+def test_run_turn_does_not_repeat_previous_stay(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.agent.complete_json_with_tools",
+        lambda *_args, **_kwargs: _model_turn(
+            direction_done=True,
+            next_question="预训练和 SFT 之间损失怎么接？",
+        ),
+    )
+    monkeypatch.setattr(
+        "app.agent.run_search_library_from_tool_args",
+        lambda *_args, **_kwargs: _fake_library(0),
+    )
+    previous = (
+        "还在「输入表示」上。请接着上一问，把下一步机制讲具体，不要跳到别的方向？"
+    )
+    result, next_id, _tools = run_turn(
+        session=_session(),
+        turns=[
+            {
+                "role": "interviewer",
+                "body": previous,
+                "direction_id": "d1",
+            }
+        ],
+        answer="用了 RoPE 提升外推",
+    )
+    assert next_id == "d1"
+    assert result.direction_done is False
+    assert result.next_question != previous
+    assert result.next_question.count("？") + result.next_question.count("?") == 1
