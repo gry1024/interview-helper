@@ -34,7 +34,7 @@ const ROLE_LABELS = {
   agent: "Agent 应用实习",
   rag: "RAG / AI 搜索实习",
 };
-const DEMO_CATALOG_URL = "/demo-projects.json?v=26";
+const DEMO_CATALOG_URL = "/demo-projects.json?v=27";
 const KNOWN_TOOL_NAMES = new Set([
   "search_library",
   "code_inspect",
@@ -1317,7 +1317,6 @@ function markCodeSubmitted(fallback) {
     submitCodeButton.textContent = "已提交";
   }
   updateCodeMeta();
-  collapseCodeExercise();
 }
 
 async function consumeCodeSubmissionResponse(response, thoughtNode) {
@@ -1375,14 +1374,13 @@ async function submitCodeExercise() {
 
   if (isMockSession()) {
     const thoughtNode = appendCodeSubmissionBubble(code, { fallback: true });
+    closeCodeExercise({ dispose: true });
     thoughtNode.hidden = false;
     thoughtNode.textContent = "本地 mock：提交接口未调用，面试可继续。";
-    markCodeSubmitted(true);
     appendInterviewerBubble(
       "代码已收到。可以说一下你为什么先减最大值再做归一化吗？",
       interviewLive.dataset.currentDirectionId || "d1",
     );
-    closeCodeExercise({ dispose: true });
     codeSubmitting = false;
     setTurnLoading(false);
     answerInput?.focus();
@@ -1431,6 +1429,7 @@ async function submitCodeExercise() {
     if (interviewLive) {
       interviewLive.dataset.pendingAnswer = code;
     }
+    closeCodeExercise({ dispose: true });
     let turn;
     try {
       turn = await consumeCodeSubmissionResponse(response, thoughtNode);
@@ -1447,7 +1446,6 @@ async function submitCodeExercise() {
         throw new Error("未收到下一问，请稍后重试。");
       }
     }
-    closeCodeExercise({ dispose: true });
     if (interviewLive) {
       delete interviewLive.dataset.pendingAnswer;
     }
@@ -1458,17 +1456,21 @@ async function submitCodeExercise() {
   } catch (error) {
     console.error("Failed to submit code exercise", error);
     codeSubmitting = false;
-    if (submitCodeButton && !codeExerciseState?.submitted) {
+    const editorOpen = Boolean(codeExerciseState);
+    if (submitCodeButton && editorOpen && !codeExerciseState?.submitted) {
       submitCodeButton.disabled = false;
     }
     setTurnLoading(false);
-    codeIdeStatus?.replaceChildren(
-      createTextElement(
-        "p",
-        "flash error",
-        error instanceof Error ? error.message : "代码提交失败，请稍后重试。",
-      ),
+    const flash = createTextElement(
+      "p",
+      "flash error",
+      error instanceof Error ? error.message : "代码提交失败，请稍后重试。",
     );
+    if (editorOpen && codeIdeStatus) {
+      codeIdeStatus.replaceChildren(flash);
+    } else {
+      turnStatus?.replaceChildren(flash);
+    }
   }
 }
 
