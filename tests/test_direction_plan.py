@@ -3,6 +3,8 @@
 import pytest
 from pydantic import ValidationError
 
+from app.agent import plan_directions
+from app.llm import LLMError
 from app.models import DirectionPlan
 
 
@@ -43,3 +45,32 @@ def test_rejects_non_sequential_direction_ids() -> None:
     payload["directions"][1]["id"] = "d3"
     with pytest.raises(ValidationError):
         DirectionPlan.model_validate(payload)
+
+
+def test_plan_directions_retries_invalid_first_question(monkeypatch) -> None:
+    calls = {"n": 0}
+
+    def fake_complete(_system: str, _user: str) -> dict:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            payload = valid_plan()
+            payload["first_question"] = "请完整介绍从 token ID 到 logits 的计算流程。"
+            return payload
+        return valid_plan()
+
+    monkeypatch.setattr("app.agent.complete_json", fake_complete)
+    plan = plan_directions("复现了 RoPE、RMSNorm 与 SwiGLU。", "llm-algo")
+    assert calls["n"] == 2
+    assert plan.first_question.startswith("一个 token ID")
+
+
+def test_plan_directions_gives_up_after_repeated_invalid_plans(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.agent.complete_json",
+        lambda *_args, **_kwargs: {
+            **valid_plan(),
+            "first_question": "请完整介绍 Transformer。",
+        },
+    )
+    with pytest.raises(LLMError):
+        plan_directions("复现了 RoPE。", "llm-algo")

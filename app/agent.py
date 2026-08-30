@@ -115,11 +115,23 @@ JSON 契约：
 现在确定整场固定方向和第一问。不要读取或假装读取代码。
 """.strip()
 
-    raw_plan = complete_json(system_prompt, user_prompt)
-    try:
-        return DirectionPlan.model_validate(raw_plan)
-    except ValidationError as exc:
-        raise LLMError("MiniMax direction plan did not match the contract") from exc
+    last_error: Exception | None = None
+    retry_hint = ""
+    for _attempt in range(3):
+        try:
+            raw_plan = complete_json(system_prompt, user_prompt + retry_hint)
+            return DirectionPlan.model_validate(raw_plan)
+        except (ValidationError, LLMError) as exc:
+            last_error = exc
+            logger.warning("direction plan failed contract or model call: %s", exc)
+            retry_hint = (
+                "\n\n上次输出不合规或为空。请重新输出合法 JSON："
+                "3～5 条方向，id 从 d1 连续；"
+                "每条 goal 用顿号或箭头列出至少 4 个检查点，写明都问到才算走完；"
+                "first_question 只问 d1 的第一个微小步骤，一个问号，大约 60 个汉字，"
+                "禁止完整/整体/全流程/每一步/分别/以及。"
+            )
+    raise LLMError("MiniMax direction plan did not match the contract") from last_error
 
 
 def _format_history(turns: list[dict[str, Any]]) -> str:

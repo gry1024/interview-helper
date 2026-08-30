@@ -73,19 +73,36 @@ def wait_ready(page) -> None:
 
 
 def start_session(page) -> str:
-    page.goto(PUBLIC_URL, wait_until="domcontentloaded", timeout=60_000)
-    page.click("#tab-interview")
-    page.fill("#github-url", GITHUB_URL)
-    page.fill("#statement", MIND_STATEMENT)
-    page.select_option("#role", ROLE)
-    page.click("#start-session")
-    page.wait_for_selector("#interview-live:not([hidden])", timeout=START_TIMEOUT_MS)
-    page.wait_for_selector("#chat-log .bubble", timeout=START_TIMEOUT_MS)
-    wait_ready(page)
-    session_id = page.locator("#interview-live").get_attribute("data-session-id")
-    if not session_id:
-        raise AssertionError("开始面试后没有拿到 session id")
-    return session_id
+    last_error = "开始面试失败"
+    for attempt in range(1, 4):
+        page.goto(PUBLIC_URL, wait_until="domcontentloaded", timeout=60_000)
+        page.click("#tab-interview")
+        page.wait_for_selector("#session-form", timeout=30_000)
+        page.fill("#github-url", GITHUB_URL)
+        page.fill("#statement", MIND_STATEMENT)
+        page.select_option("#role", ROLE)
+        page.click("#start-session")
+        try:
+            page.wait_for_selector(
+                "#interview-live:not([hidden])",
+                timeout=START_TIMEOUT_MS,
+            )
+        except PlaywrightTimeout:
+            status = ""
+            if page.locator("#session-status").count():
+                status = page.locator("#session-status").inner_text()
+            last_error = f"第 {attempt} 次开场超时：{status or '无错误文案'}"
+            log(last_error)
+            time.sleep(8)
+            continue
+        page.wait_for_selector("#chat-log .bubble", timeout=START_TIMEOUT_MS)
+        wait_ready(page)
+        session_id = page.locator("#interview-live").get_attribute("data-session-id")
+        if not session_id:
+            last_error = "开始面试后没有拿到 session id"
+            continue
+        return session_id
+    raise AssertionError(last_error)
 
 
 def answer_once(page, text: str, index: int) -> dict[str, str]:
