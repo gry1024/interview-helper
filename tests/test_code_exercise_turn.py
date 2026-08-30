@@ -48,6 +48,56 @@ def _legal_turn_json() -> dict[str, Any]:
     }
 
 
+def _prior_user_turns(count: int, *, direction_id: str = "d1") -> list[dict[str, Any]]:
+    turns: list[dict[str, Any]] = [
+        {
+            "role": "interviewer",
+            "body": "先讲讲你这个项目主要做成了哪几块？",
+            "direction_id": direction_id,
+        }
+    ]
+    for index in range(count):
+        turns.append(
+            {
+                "role": "user",
+                "body": f"第{index + 1}答：token 进 embedding，再进注意力，QKV 会对齐。",
+                "direction_id": direction_id,
+            }
+        )
+        turns.append(
+            {
+                "role": "thought",
+                "body": "评价：还在推进。\n查代码：否\n本方向结束：否，因为还没走完。",
+                "direction_id": direction_id,
+            }
+        )
+        turns.append(
+            {
+                "role": "interviewer",
+                "body": "RoPE 具体旋转的是哪一部分？",
+                "direction_id": direction_id,
+            }
+        )
+    return turns
+
+
+def _successful_exercise_meta(exercise_id: str, title: str) -> dict[str, Any]:
+    payload = {
+        "exercise_id": exercise_id,
+        "title": title,
+        "prompt": f"用 Python 实现{title}",
+        "language": "python",
+        "starter": "pass\n",
+    }
+    return {
+        "name": "code_exercise",
+        "args": {"exercise_id": exercise_id},
+        "result": f"已打开《{title}》",
+        "exercise_id": exercise_id,
+        "payload": payload,
+    }
+
+
 class _FakeFunction:
     def __init__(self, name: str, arguments: str) -> None:
         self.name = name
@@ -151,26 +201,13 @@ def test_complete_json_with_tools_keeps_inspect_and_exercise(monkeypatch) -> Non
 
 def test_run_turn_opens_catalog_exercise_not_invented(monkeypatch) -> None:
     completions = _FakeCompletions(
-        [
-            _FakeResponse(
-                _FakeMessage(
-                    tool_calls=[
-                        _FakeToolCall(
-                            "c1",
-                            "code_exercise",
-                            json.dumps({"exercise_id": "mha-forward"}),
-                        )
-                    ]
-                )
-            ),
-            _FakeResponse(_FakeMessage(content=json.dumps(_legal_turn_json()))),
-        ]
+        [_FakeResponse(_FakeMessage(content=json.dumps(_legal_turn_json())))]
     )
     _install_client(monkeypatch, completions)
 
     result, next_id, tools = run_turn(
         session=_session(),
-        turns=[{"role": "interviewer", "body": "注意力下一步怎么算？", "direction_id": "d1"}],
+        turns=_prior_user_turns(4),
         answer="我说到 Multi-Head Attention 了，可以手写前向。",
     )
     assert next_id == "d1"
@@ -182,11 +219,40 @@ def test_run_turn_opens_catalog_exercise_not_invented(monkeypatch) -> None:
     assert "Multi-Head" in event["payload"]["title"]
     assert event["payload"]["starter"]
     assert "已打开《" in event["result"]
-    assert CODE_INSPECT_TOOL in completions.calls[0]["tools"]
-    assert CODE_EXERCISE_TOOL in completions.calls[0]["tools"]
+    first_tools = completions.calls[0].get("tools") or []
+    assert CODE_INSPECT_TOOL in first_tools or first_tools == []
     from app.tools.search_library import SEARCH_LIBRARY_TOOL
 
-    assert SEARCH_LIBRARY_TOOL in completions.calls[0]["tools"]
+    assert SEARCH_LIBRARY_TOOL not in first_tools
+    assert "编辑器" in result.next_question or "手撕" in result.next_question
+
+
+def test_run_turn_does_not_open_exercise_on_first_rope_answer(monkeypatch) -> None:
+    completions = _FakeCompletions(
+        [_FakeResponse(_FakeMessage(content=json.dumps(_legal_turn_json())))]
+    )
+    _install_client(monkeypatch, completions)
+    result, next_id, tools = run_turn(
+        session=_session(),
+        turns=[
+            {
+                "role": "interviewer",
+                "body": "RoPE 具体旋转的是哪一部分？",
+                "direction_id": "d1",
+            }
+        ],
+        answer="旋的是 Q 和 K，把偶数维两两组成复数再乘 e^{iθ}。",
+    )
+    assert next_id == "d1"
+    assert result.next_question
+    assert not any(item.get("name") == "code_exercise" for item in tools["events"])
+    assert any(item.get("name") == "search_library" for item in tools["events"])
+    first_tools = completions.calls[0].get("tools") or []
+    from app.tools.search_library import SEARCH_LIBRARY_TOOL
+    from app.tools.code_exercise import CODE_EXERCISE_TOOL
+
+    assert SEARCH_LIBRARY_TOOL not in first_tools
+    assert CODE_EXERCISE_TOOL not in first_tools
 
 
 def test_run_turn_rejects_invented_exercise_id(monkeypatch) -> None:
@@ -210,12 +276,11 @@ def test_run_turn_rejects_invented_exercise_id(monkeypatch) -> None:
 
     _result, _next_id, tools = run_turn(
         session=_session(),
-        turns=[{"role": "interviewer", "body": "下一问", "direction_id": "d1"}],
+        turns=_prior_user_turns(4),
         answer="我可以写两数之和。",
     )
-    event = next(item for item in tools["events"] if item["name"] == "code_exercise")
-    assert event.get("payload") is None
-    assert "无法打开" in event["result"]
+    assert not any(item.get("name") == "code_exercise" for item in tools["events"])
+    assert any(item.get("name") == "search_library" for item in tools["events"])
 
 
 def test_looks_like_code_dump_and_forces_editor(monkeypatch) -> None:
@@ -240,7 +305,7 @@ def test_looks_like_code_dump_and_forces_editor(monkeypatch) -> None:
     _install_client(monkeypatch, completions)
     _result, _next_id, tools = run_turn(
         session=_session(),
-        turns=[{"role": "interviewer", "body": "注意力怎么算？", "direction_id": "d1"}],
+        turns=_prior_user_turns(4),
         answer=dumped,
     )
     event = next(item for item in tools["events"] if item["name"] == "code_exercise")
@@ -253,7 +318,7 @@ def test_looks_like_code_dump_and_forces_editor(monkeypatch) -> None:
 
     result, next_id, tools = run_turn(
         session=_session(),
-        turns=[{"role": "interviewer", "body": "RoPE 加在哪？", "direction_id": "d1"}],
+        turns=_prior_user_turns(4),
         answer="RoPE 旋 Q/K。请打开手撕题，让我手写 apply_rope。",
     )
     assert next_id == "d1"
@@ -271,19 +336,36 @@ def test_run_turn_force_opens_rope_at_implementation_depth(monkeypatch) -> None:
     _install_client(monkeypatch, completions)
     result, next_id, tools = run_turn(
         session=_session(),
-        turns=[
-            {
-                "role": "interviewer",
-                "body": "RoPE 具体旋转的是哪一部分？",
-                "direction_id": "d1",
-            }
-        ],
+        turns=_prior_user_turns(4),
         answer="旋的是 Q 和 K，把偶数维两两组成复数再乘 e^{iθ}。",
     )
     assert next_id == "d1"
     assert result.next_question
     event = next(item for item in tools["events"] if item["name"] == "code_exercise")
     assert event["payload"]["exercise_id"] == "rope-apply"
+    assert "编辑器" in result.next_question or "手撕" in result.next_question or "RoPE" in result.next_question
+
+
+def test_run_turn_rejects_third_successful_exercise(monkeypatch) -> None:
+    completions = _FakeCompletions(
+        [_FakeResponse(_FakeMessage(content=json.dumps(_legal_turn_json())))]
+    )
+    _install_client(monkeypatch, completions)
+    prior = _prior_user_turns(4)
+    prior[1]["meta"] = [_successful_exercise_meta("mha-forward", "手撕 Multi-Head Attention")]
+    prior[4]["meta"] = [_successful_exercise_meta("rope-apply", "手撕 RoPE")]
+    result, next_id, tools = run_turn(
+        session=_session(),
+        turns=prior,
+        answer="旋的是 Q 和 K，把偶数维两两组成复数再乘 e^{iθ}。再手写 RMSNorm。",
+    )
+    assert next_id == "d1"
+    assert result.next_question
+    assert not any(item.get("name") == "code_exercise" for item in tools["events"])
+    from app.tools.code_exercise import CODE_EXERCISE_TOOL
+
+    first_tools = completions.calls[0].get("tools") or []
+    assert CODE_EXERCISE_TOOL not in first_tools
 
 
 def test_run_turn_does_not_open_exercise_on_transformer_name_drop(monkeypatch) -> None:
@@ -321,7 +403,10 @@ def test_run_turn_submission_does_not_offer_exercise_tool(monkeypatch) -> None:
     )
     from app.tools.search_library import SEARCH_LIBRARY_TOOL
 
-    assert completions.calls[0]["tools"] == [CODE_INSPECT_TOOL, SEARCH_LIBRARY_TOOL]
+    first_tools = completions.calls[0].get("tools") or []
+    assert SEARCH_LIBRARY_TOOL not in first_tools
+    assert CODE_EXERCISE_TOOL not in first_tools
+    assert first_tools in ([CODE_INSPECT_TOOL], [])
 
 
 def test_turns_sse_emits_code_exercise_event(

@@ -514,7 +514,7 @@ def test_turns_endpoint_emits_tool_start_before_thought(
     assert response.status_code == 200
     body = response.text
     assert "event: tool_start" in body
-    assert "正在调用检索面经工具" in body
+    assert "正在检索" in body
     assert "检索到 5 条面经" in body
     start_at = body.find("event: tool_start")
     thought_at = body.find("event: thought_delta")
@@ -534,7 +534,7 @@ def test_unknown_tool_is_not_recorded(monkeypatch) -> None:
 
     captured: dict[str, object] = {}
 
-    def fake_complete(system, user, tools, run_tool, max_tool_rounds=2, **_kwargs):
+    def fake_complete(system, user, tools, run_tool, max_tool_rounds=1, **_kwargs):
         captured["reply"] = run_tool("thought", {})
         return _model_turn(direction_done=False, next_question="RoPE 具体旋转的是哪一部分？")
 

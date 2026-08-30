@@ -154,20 +154,7 @@ def test_run_turn_triggers_inspect_without_leaking_coordinates(
     _write_minimind_fixture(root)
 
     completions = _FakeCompletions(
-        [
-            _FakeResponse(
-                _FakeMessage(
-                    tool_calls=[
-                        _FakeToolCall(
-                            "c1",
-                            "code_inspect",
-                            json.dumps({"query": "rerank 万卡"}, ensure_ascii=False),
-                        )
-                    ]
-                )
-            ),
-            _FakeResponse(_FakeMessage(content=json.dumps(_legal_turn_json()))),
-        ]
+        [_FakeResponse(_FakeMessage(content=json.dumps(_legal_turn_json())))]
     )
     _install_client(monkeypatch, completions)
 
@@ -194,11 +181,9 @@ def test_run_turn_triggers_inspect_without_leaking_coordinates(
     assert "internal_excerpt" in next(
         item["result"] for item in tools["meta"] if item["name"] == "code_inspect"
     )
-    second_messages = completions.calls[1]["messages"]
-    assert any(
-        msg.get("role") == "tool" and "internal_excerpt" in msg.get("content", "")
-        for msg in second_messages
-    )
+    assert len(completions.calls) == 1
+    first_tools = completions.calls[0].get("tools") or []
+    assert CODE_INSPECT_TOOL not in first_tools
 
 
 def test_run_turn_jail_path_hint_does_not_stop_interview(
@@ -249,20 +234,7 @@ def test_run_turn_jail_path_hint_does_not_stop_interview(
 
 def test_run_turn_clone_ok_false_keeps_interview_going(monkeypatch) -> None:
     completions = _FakeCompletions(
-        [
-            _FakeResponse(
-                _FakeMessage(
-                    tool_calls=[
-                        _FakeToolCall(
-                            "c1",
-                            "code_inspect",
-                            json.dumps({"query": "rerank"}, ensure_ascii=False),
-                        )
-                    ]
-                )
-            ),
-            _FakeResponse(_FakeMessage(content=json.dumps(_legal_turn_json()))),
-        ]
+        [_FakeResponse(_FakeMessage(content=json.dumps(_legal_turn_json())))]
     )
     _install_client(monkeypatch, completions)
 

@@ -4,8 +4,7 @@ from collections.abc import Callable
 import json
 import logging
 import re
-from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from pydantic import ValidationError
 
@@ -28,6 +27,7 @@ from app.tools.code_exercise import (
     catalog_for_prompt,
     match_implementation_exercise,
     run_code_exercise_from_tool_args,
+    successful_opened_exercise_ids,
     used_exercise_ids,
 )
 from app.tools.code_inspect import (
@@ -35,7 +35,6 @@ from app.tools.code_inspect import (
     run_code_inspect_from_tool_args,
 )
 from app.tools.search_library import (
-    SEARCH_LIBRARY_TOOL,
     LibrarySearchResult,
     is_unsearchable_query,
     run_search_library_from_tool_args,
@@ -43,7 +42,6 @@ from app.tools.search_library import (
 )
 
 
-APP_DIR = Path(__file__).resolve().parent
 logger = logging.getLogger(__name__)
 RELATED_SAMPLE_JD_LIMIT = 12
 RELATED_SAMPLE_IV_LIMIT = 24
@@ -133,17 +131,39 @@ JSON 契约：
     raise LLMError("MiniMax direction plan did not match the contract") from last_error
 
 
+def _talk_line(turn: dict[str, Any]) -> str:
+    role = turn.get("role")
+    if role == "interviewer":
+        prefix = "面试官"
+    elif role == "user":
+        prefix = "学生"
+    else:
+        return ""
+    body = re.sub(r"\s+", " ", str(turn.get("body") or "")).strip()
+    if len(body) > HISTORY_BODY_CHARS:
+        body = body[: HISTORY_BODY_CHARS - 1] + "…"
+    return f"{prefix}: {body}"
+
+
 def _format_history(turns: list[dict[str, Any]]) -> str:
+    talk = [turn for turn in turns if turn.get("role") in {"interviewer", "user"}]
+    if not talk:
+        return "（尚无对话）"
+    earlier = talk[:-HISTORY_RECENT_TALK] if len(talk) > HISTORY_RECENT_TALK else []
+    recent = talk[-HISTORY_RECENT_TALK:]
     lines: list[str] = []
-    for turn in turns:
-        role = turn["role"]
-        if role == "interviewer":
-            prefix = "面试官"
-        elif role == "user":
-            prefix = "学生"
-        else:
-            prefix = "思考"
-        lines.append(f"{prefix}: {turn['body']}")
+    if earlier:
+        counts: dict[str, int] = {}
+        for turn in earlier:
+            if turn.get("role") != "user":
+                continue
+            direction_id = str(turn.get("direction_id") or "?")
+            counts[direction_id] = counts.get(direction_id, 0) + 1
+        progress = "，".join(
+            f"{direction_id} {count}轮" for direction_id, count in counts.items()
+        )
+        lines.append(f"更早进度：{progress or '已问过若干轮'}。")
+    lines.extend(line for turn in recent if (line := _talk_line(turn)))
     return "\n".join(lines)
 
 
@@ -152,6 +172,35 @@ def _latest_interviewer_question(turns: list[dict[str, Any]]) -> str:
         if turn.get("role") == "interviewer":
             return str(turn.get("body") or "").strip()
     return ""
+
+
+def _session_user_answer_count(
+    turns: list[dict[str, Any]] | None,
+    current_answer: str | None = None,
+) -> int:
+    prior = sum(1 for turn in turns or [] if turn.get("role") == "user")
+    if current_answer is None:
+        return prior
+    return prior + 1
+
+
+def exercise_unlocked_this_turn(
+    *,
+    turns: list[dict[str, Any]] | None,
+    answer: str,
+    allow_code_exercise: bool,
+) -> bool:
+    """True only after 5 student answers and fewer than 2 successful opens."""
+
+    if not allow_code_exercise:
+        return False
+    if is_stuck_answer(answer):
+        return False
+    if _session_user_answer_count(turns, answer) < MIN_USER_TURNS_BEFORE_EXERCISE:
+        return False
+    if len(successful_opened_exercise_ids(turns)) >= MAX_EXERCISES_PER_SESSION:
+        return False
+    return True
 
 
 STUCK_MARKERS = (
@@ -207,6 +256,10 @@ END_ADVOCACY_RE = re.compile(r"可以结束|建议结束|请点结束|点结束�
 MIN_TURNS_BEFORE_GOAL_DONE = 6
 MIN_STUCK_BEFORE_ABANDON = 2
 MIN_INTERVIEWER_BEFORE_ABANDON = 2
+MIN_USER_TURNS_BEFORE_EXERCISE = 5
+MAX_EXERCISES_PER_SESSION = 2
+HISTORY_RECENT_TALK = 8
+HISTORY_BODY_CHARS = 360
 
 
 def _direction_ids(directions: list[dict[str, str]]) -> list[str]:
@@ -378,7 +431,7 @@ _CODE_LINE = re.compile(
     r"^\s*(def |class |import |from \w+ import |@\w+|return |if __name__)"
 )
 TOOL_START_LABELS = {
-    "search_library": "正在调用检索面经工具",
+    "search_library": "正在检索",
     "code_inspect": "正在调用查仓库工具",
     "code_exercise": "正在打开手撕题",
 }
@@ -472,6 +525,23 @@ def _stay_next_question(direction: dict[str, str], answer: str) -> str:
     else:
         text = f"还在「{title}」上。请接着上一问，把下一步机制讲具体，不要跳到别的方向？"
     return text[:240]
+
+
+def _exercise_followup_question(payload: Mapping[str, Any] | dict[str, Any]) -> str:
+    title = str(payload.get("title") or "这道手撕").strip()
+    short = re.sub(r"^手撕\s*", "", title).strip()[:24] or "这道题"
+    return f"编辑器里先写出{short}的第一步关键计算？"
+
+
+def _ensure_exercise_followup(question: str, payload: Mapping[str, Any] | dict[str, Any]) -> str:
+    text = re.sub(r"\s+", " ", (question or "").strip())
+    title = str(payload.get("title") or "")
+    needles = ("编辑器", "手撕", "写出", "starter")
+    if any(token in text for token in needles):
+        return text[:240]
+    if title and any(part and part in text for part in re.split(r"[\s《》]+", title) if len(part) >= 2):
+        return text[:240]
+    return _exercise_followup_question(payload)
 
 
 def _should_teach_stuck(
@@ -590,10 +660,17 @@ def suggested_code_exercise_args(
     answer: str,
     turns: list[dict[str, Any]] | None,
     used_ids: set[str],
+    unlocked: bool = True,
 ) -> dict[str, str] | None:
+    if not unlocked:
+        return None
     if "[手撕提交" in (answer or "") or is_stuck_answer(answer):
         return None
     if is_unsearchable_query(answer or ""):
+        return None
+    if len(successful_opened_exercise_ids(turns)) >= MAX_EXERCISES_PER_SESSION:
+        return None
+    if _session_user_answer_count(turns, answer) < MIN_USER_TURNS_BEFORE_EXERCISE:
         return None
     explicit = requested_code_exercise_args(answer)
     if explicit:
@@ -635,9 +712,16 @@ def _direction_progress_text(
 def _align_thought_with_tools(thought: str, tool_events: list[dict[str, Any]]) -> str:
     """Keep thought as 评价/查代码/本方向结束. Do not paste tool dumps into it."""
 
-    inspect_ran = any(event.get("name") == "code_inspect" for event in tool_events)
-    if inspect_ran and "查代码：否" in thought:
+    inspect_event = next(
+        (event for event in tool_events if event.get("name") == "code_inspect"),
+        None,
+    )
+    if inspect_event and "查代码：否" in thought:
         thought = thought.replace("查代码：否", "查代码：是", 1)
+    if inspect_event:
+        public = str(inspect_event.get("result") or "").strip()
+        if public and public not in thought and "查代码：是" in thought:
+            thought = thought.replace("查代码：是", f"查代码：是，{public[:80]}", 1)
     cleaned: list[str] = []
     for line in thought.splitlines():
         stripped = line.strip()
@@ -656,22 +740,17 @@ def tool_start_payload(name: str) -> dict[str, str]:
     }
 
 
-TURN_JSON_CONTRACT = """仓库不在上下文中。要核对真伪或决定同方向怎么引，就调用 code_inspect。
-禁止把路径、文件名或行号写入 next_question；tool 结果只影响评价和引导，不得念出坐标。
-clone 不可用时 tool 会返回仓库不可用，面试继续，不要假装看过代码。
-每轮会先按**当前话题**检索面经并写进上下文；有命中就改写其中一条原问，条数不固定，没有相关命中就按对话追问，禁止为了凑条数再搜无关内容。
-若要换更具体的技术词再搜一次，query 必须是话题词（RoPE、LoRA 秩、KV cache），禁止用「请继续问吧 / 换个话题 / 好的」当检索词。
-检索结果只给自己看，用来改写下一问；不要把 query、命中条数或「检索面经：……」写进 thought。
-聊到 RoPE / MHA / RMSNorm / KV Cache / LoRA 等具体实现时，必须调用 code_exercise，不要只口头连问细节。
-学生说手撕/打开题/想写，或在对话框里贴了一串代码时，也必须打开编辑器。
-题已打开或学生刚提交后，禁止再调用；next_question 不能空，只问一个微步骤、一个问号。
-普通问答禁止把代码当口答。服务端先查加速题库，没有命中再按面经里提到的相关手撕出题；没有相关面经就口头问。同一场同一题不重复，一轮最多一题。禁止编无关算法题。
+TURN_JSON_CONTRACT = """仓库不在上下文中。要核对真伪就调用 code_inspect；禁止把路径、文件名或行号写入 next_question。
+每轮服务端已按当前话题检索面经（最多 5 条短摘录），不要再调用 search_library，不要为条数再搜。
+有命中就改写其中一条原问；没有命中就按对话追问。过程句不当检索词。
+手撕由服务端决定：学生有效回答满 5 轮且本场成功出题未满 2 次，才可能打开编辑器。
+已打开则 next_question 必须承接这道题（一个问号）；未打开则口头问，不要假装已出题。
+禁止编无关算法题。clone 不可用时不要假装看过代码。
 {exercise_prompt}
-浅答、短答、只复述术语、第一次说不懂时，direction_done 必须是 false，next_question 必须仍锁在当前方向。
-学生说不懂、不太懂、没有深入思考过、希望交流时，在 thought 评价段用「先讲清：」短讲当前这一步（用学生项目里的对象，不是上课/总评/建议清单），next_question 只留一个更朴素的问号。不要只换说法空转，不要因此切方向。
-只有学生明确表示不会/不知道且短讲后再完全空白，或当前 goal 的检查点都已问到，才允许 direction_done=true。
-direction_done=true 时，下一问只能是下一条已定方向的第一步；没有下一条就收束，禁止发明 d6 或任何新主线。
-禁止在 next_question 里劝用户结束。
+浅答、短答、第一次说不懂时 direction_done 必须是 false，仍锁当前方向。
+学生说不懂时，thought 评价段用「先讲清：」短讲当前步，next_question 只留一个更朴素的问号。
+只有短讲后再完全空白，或 goal 检查点都已问到，才允许 direction_done=true。
+direction_done=true 时下一问只能是下一条已定方向的第一步；没有下一条就收束，禁止发明新主线，禁止劝结束。
 最终只输出合法 JSON：
 {
   "thought": "评价……\\n查代码：是/否……\\n本方向结束：是/否，因为……",
@@ -680,16 +759,31 @@ direction_done=true 时，下一问只能是下一条已定方向的第一步；
 }"""
 
 
-def _exercise_prompt_block(allow_code_exercise: bool) -> str:
-    if allow_code_exercise:
+def _exercise_prompt_block(
+    allow_code_exercise: bool,
+    *,
+    unlocked: bool = False,
+    matched_exercise_id: str | None = None,
+) -> str:
+    if not allow_code_exercise:
         return (
-            (APP_DIR / "prompts" / "code_exercise.md").read_text(encoding="utf-8")
-            + "\n"
-            + catalog_for_prompt()
+            "本轮是手撕代码提交，根据代码文本评价，"
+            "不要再调用 code_exercise，不要假装编译运行。"
         )
+    if not unlocked:
+        return (
+            "本轮不要打开手撕：学生有效回答未满 5 轮，或本场已成功出题 2 次。"
+        )
+    if matched_exercise_id:
+        one = catalog_for_prompt(matched_exercise_id)
+        if one:
+            return (
+                f"本轮可出这一题，必须打开编辑器，下一问承接这道手撕：\n{one}\n"
+                "禁止编其他题。"
+            )
     return (
-        "本轮是手撕代码提交，根据代码文本评价，"
-        "不要再调用 code_exercise，不要假装编译运行。"
+        "到实现层且面经有相关手撕时由服务端打开编辑器；没有相关面经就口头问。"
+        "整场最多 2 次。禁止编题。"
     )
 
 
@@ -699,6 +793,8 @@ def build_turn_system_prompt(
     turns: list[dict[str, Any]] | None,
     answer: str,
     allow_code_exercise: bool = True,
+    matched_exercise_id: str | None = None,
+    exercise_unlocked: bool | None = None,
 ) -> str:
     """Assemble the live interviewer system prompt. The public Agent page uses this too."""
 
@@ -709,7 +805,20 @@ def build_turn_system_prompt(
     current_direction = next(
         item for item in directions if item["id"] == current_direction_id
     )
-    exercise_prompt = _exercise_prompt_block(allow_code_exercise)
+    unlocked = (
+        exercise_unlocked
+        if exercise_unlocked is not None
+        else exercise_unlocked_this_turn(
+            turns=turns,
+            answer=answer,
+            allow_code_exercise=allow_code_exercise,
+        )
+    )
+    exercise_prompt = _exercise_prompt_block(
+        allow_code_exercise,
+        unlocked=unlocked,
+        matched_exercise_id=matched_exercise_id,
+    )
     progress = _direction_progress_text(
         turns or [],
         current_direction_id,
@@ -736,6 +845,35 @@ def build_turn_system_prompt(
 """.strip()
 
 
+def _complete_exercise_payload(payload: Mapping[str, Any] | None) -> dict[str, str] | None:
+    if not isinstance(payload, Mapping):
+        return None
+    title = str(payload.get("title") or "").strip()
+    prompt = str(payload.get("prompt") or "").strip()
+    starter = str(payload.get("starter") or "")
+    exercise_id = str(payload.get("exercise_id") or "").strip()
+    if not title or not prompt or not starter or not exercise_id:
+        return None
+    return {
+        "exercise_id": exercise_id,
+        "title": title,
+        "prompt": prompt,
+        "language": str(payload.get("language") or "python").strip() or "python",
+        "starter": starter,
+        **({"sample_id": str(payload["sample_id"])} if payload.get("sample_id") else {}),
+    }
+
+
+def _opened_exercise_event(tool_events: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for event in tool_events:
+        if event.get("name") != "code_exercise":
+            continue
+        payload = _complete_exercise_payload(event.get("payload"))
+        if payload:
+            return event
+    return None
+
+
 def run_turn(
     *,
     session: dict[str, Any],
@@ -751,23 +889,18 @@ def run_turn(
     current_direction = next(
         item for item in directions if item["id"] == current_direction_id
     )
-    system_prompt = build_turn_system_prompt(
-        session=session,
+
+    result: TurnResult | None = None
+    last_error: Exception | None = None
+    tool_events: list[dict[str, Any]] = []
+    tool_meta: list[dict[str, Any]] = []
+    opened_ids = used_exercise_ids(turns)
+    seen_tool_names: set[str] = set()
+    exercise_unlocked = exercise_unlocked_this_turn(
         turns=turns,
         answer=answer,
         allow_code_exercise=allow_code_exercise,
     )
-
-    result: TurnResult | None = None
-    last_error: Exception | None = None
-    retry_hint = ""
-    tool_events: list[dict[str, Any]] = []
-    tool_meta: list[dict[str, Any]] = []
-    opened_ids = used_exercise_ids(turns)
-    turn_tools = [CODE_INSPECT_TOOL, SEARCH_LIBRARY_TOOL]
-    if allow_code_exercise:
-        turn_tools = [CODE_INSPECT_TOOL, CODE_EXERCISE_TOOL, SEARCH_LIBRARY_TOOL]
-    seen_tool_names: set[str] = set()
 
     def emit(event: dict[str, Any]) -> None:
         if on_progress is not None:
@@ -786,8 +919,10 @@ def run_turn(
     def run_tool(name: str, args: dict[str, Any]) -> str:
         resolved = resolve_tool_name(name)
         if resolved is None:
-            return "只能使用 search_library、code_inspect 或 code_exercise。不要调用 thought 或其他名字。"
+            return "只能使用 code_inspect 或 code_exercise。不要调用 thought 或其他名字。"
         name = resolved
+        if name == "search_library":
+            return "本轮已检索面经，不要再调用 search_library。"
         if name == "code_inspect":
             inspect = run_code_inspect_from_tool_args(
                 session["id"],
@@ -802,17 +937,10 @@ def run_turn(
             )
             return model_text
         if name == "code_exercise":
-            if not allow_code_exercise:
-                text = "本轮是代码提交评价，不要再打开手撕题。"
-                record_tool(
-                    {"name": name, "args": args, "result": text},
-                    {"name": name, "args": args, "result": text},
-                )
-                return text
-            already_opened = any(
-                event.get("name") == "code_exercise" and event.get("payload")
-                for event in tool_events
-            )
+            if not exercise_unlocked:
+                return "本轮不能打开手撕：未满 5 轮学生回答，或本场已成功出题 2 次。"
+            if _opened_exercise_event(tool_events):
+                return "本轮已打开一题，不要再调用。next_question 必须承接这道手撕。"
             opened = run_code_exercise_from_tool_args(
                 args,
                 used_ids=opened_ids,
@@ -821,55 +949,32 @@ def run_turn(
                     f"{current_direction.get('title', '')} "
                     f"{current_direction.get('goal', '')}"
                 ),
-                already_opened_this_turn=already_opened,
+                already_opened_this_turn=False,
             )
-            model_text = opened.for_model()
-            public_text = opened.for_public()
-            event: dict[str, Any] = {
-                "name": name,
-                "args": args,
-                "result": public_text,
-            }
-            payload = opened.sse_payload()
-            if payload:
-                event["payload"] = payload
-                opened_ids.add(payload["exercise_id"])
-            meta_item: dict[str, Any] = {
-                "name": name,
-                "args": args,
-                "result": model_text,
-            }
-            if payload:
-                meta_item["exercise_id"] = payload["exercise_id"]
-            record_tool(event, meta_item)
-            return model_text
-        if name == "search_library":
-            found = run_search_library_from_tool_args(args)
-            model_text = found.for_model()
-            public_text = found.for_public()
-            hits = found.public_hits()
-            tool_events[:] = [
-                event for event in tool_events if event.get("name") != "search_library"
-            ]
-            tool_meta[:] = [
-                item for item in tool_meta if item.get("name") != "search_library"
-            ]
+            payload = _complete_exercise_payload(opened.sse_payload())
+            if not payload:
+                return opened.for_model()
+            opened_ids.add(payload["exercise_id"])
             record_tool(
                 {
                     "name": name,
                     "args": args,
-                    "result": public_text,
-                    "hits": hits,
+                    "result": opened.for_public(),
+                    "payload": payload,
                 },
                 {
                     "name": name,
                     "args": args,
-                    "result": model_text,
-                    "hits": hits,
+                    "result": opened.for_model(),
+                    "exercise_id": payload["exercise_id"],
+                    "payload": payload,
                 },
             )
-            return model_text
-        return "只能使用 search_library、code_inspect 或 code_exercise。不要调用 thought 或其他名字。"
+            return opened.for_model()
+        return "只能使用 code_inspect 或 code_exercise。不要调用 thought 或其他名字。"
+
+    emit({"kind": "tool_start", **tool_start_payload("search_library")})
+    seen_tool_names.add("search_library")
 
     topic_query = topic_search_query(
         direction_title=str(current_direction.get("title") or ""),
@@ -883,31 +988,83 @@ def run_turn(
         if topic_query
         else LibrarySearchResult(ok=True, query="", hits=[])
     )
-    suggested_exercise = (
-        suggested_code_exercise_args(
-            answer=answer,
-            turns=turns,
-            used_ids=set(opened_ids),
-        )
-        if allow_code_exercise
-        else None
+    hits = seeded_search.public_hits()[:5]
+    record_tool(
+        {
+            "name": "search_library",
+            "args": {"query": topic_query, "kind": "interview"},
+            "result": seeded_search.for_public(),
+            "hits": hits,
+        },
+        {
+            "name": "search_library",
+            "args": {"query": topic_query, "kind": "interview"},
+            "result": seeded_search.for_model(),
+            "hits": hits,
+        },
     )
-    exercise_hint = ""
-    if opened_ids:
-        exercise_hint += (
-            f"\n本场已开过手撕：{', '.join(sorted(opened_ids))}。"
-            "同一题不要再调用 code_exercise。"
-            "next_question 不能空，只问一个实现点、一个问号。"
-        )
+
+    inspect_query = fabricated_inspect_query(answer)
+    if inspect_query:
+        run_tool("code_inspect", {"query": inspect_query})
+
+    suggested_exercise = suggested_code_exercise_args(
+        answer=answer,
+        turns=turns,
+        used_ids=set(opened_ids),
+        unlocked=exercise_unlocked,
+    )
     if suggested_exercise:
-        selector = suggested_exercise.get("exercise_id") or suggested_exercise.get(
-            "topic", "当前实现"
+        run_tool("code_exercise", suggested_exercise)
+
+    opened_now = _opened_exercise_event(tool_events)
+    matched_exercise_id = None
+    if opened_now and isinstance(opened_now.get("payload"), Mapping):
+        matched_exercise_id = str(opened_now["payload"].get("exercise_id") or "") or None
+    elif suggested_exercise:
+        matched_exercise_id = suggested_exercise.get("exercise_id")
+
+    turn_tools: list[dict[str, Any]] = []
+    if not any(event.get("name") == "code_inspect" for event in tool_events):
+        turn_tools.append(CODE_INSPECT_TOOL)
+    if exercise_unlocked and not opened_now and not suggested_exercise:
+        turn_tools.append(CODE_EXERCISE_TOOL)
+    max_tool_rounds = 1 if turn_tools else 0
+
+    system_prompt = build_turn_system_prompt(
+        session=session,
+        turns=turns,
+        answer=answer,
+        allow_code_exercise=allow_code_exercise,
+        matched_exercise_id=matched_exercise_id,
+        exercise_unlocked=exercise_unlocked,
+    )
+    inspect_hint = ""
+    inspect_event = next(
+        (event for event in tool_events if event.get("name") == "code_inspect"),
+        None,
+    )
+    if inspect_event:
+        inspect_meta = next(
+            (item for item in tool_meta if item.get("name") == "code_inspect"),
+            inspect_event,
         )
+        inspect_hint = f"\n本轮已核对仓库：{inspect_meta.get('result')}"
+    exercise_hint = ""
+    if successful_opened_exercise_ids(turns):
         exercise_hint += (
-            f"\n当前话题已落到题库实现（{selector}）。"
-            "本轮必须调用 code_exercise 打开编辑器，下一问承接这道手撕，"
-            "不要再口头连问两个细节。"
+            f"\n本场已成功出题：{', '.join(sorted(successful_opened_exercise_ids(turns)))}。"
+            "不要再打开同一题。"
         )
+    if opened_now:
+        title = str((opened_now.get("payload") or {}).get("title") or "手撕")
+        exercise_hint += (
+            f"\n本轮已打开《{title}》。next_question 必须承接这道手撕，一个问号，"
+            "不要口头连问当没出题。"
+        )
+    elif not exercise_unlocked:
+        exercise_hint += "\n本轮不要打开手撕。"
+
     user_prompt = f"""
 对话史：
 {_format_history(turns)}
@@ -915,47 +1072,37 @@ def run_turn(
 学生刚刚的回答 JSON：
 {json.dumps(answer, ensure_ascii=False)}
 
-本轮已按当前话题检索面经，供你改写下一问。命中条数不固定，没有相关原问就按对话追问，不要凑题。
+本轮已按当前话题检索面经（最多 5 条），不要再检索。
 {seeded_search.for_model()}
+{inspect_hint}
 {exercise_hint}
 
 请只锁在当前方向继续深挖。答得差也不要跳方向。学生说不懂时，在评价里用「先讲清：」短讲当前这一步，再问一个更朴素的下一问，不要只换说法空转，不要给建议或总评，不要劝结束。
 下一问只问一件事，必须给出 next_question。
-若回答声称了仓库里可能对不上的实现（例如 rerank、万卡分布式训练），必须先调用 code_inspect 再出下一问。
-学生要手撕或在对话框贴了代码时，必须调用 code_exercise 打开编辑器，不要把代码当口答。
 """.strip()
 
-    def seed_topic_search() -> None:
-        hits = seeded_search.public_hits()
-        record_tool(
-            {
-                "name": "search_library",
-                "args": {"query": topic_query, "kind": "interview"},
-                "result": seeded_search.for_public(),
-                "hits": hits,
-            },
-            {
-                "name": "search_library",
-                "args": {"query": topic_query, "kind": "interview"},
-                "result": seeded_search.for_model(),
-                "hits": hits,
-            },
+    skip_llm = _should_teach_stuck(answer, turns, current_direction_id)
+    if skip_llm:
+        result = fallback_turn_result(current_direction, answer)
+        result = result.model_copy(
+            update={
+                "thought": _inject_stuck_teach(
+                    result.thought,
+                    direction=current_direction,
+                    last_question=_latest_interviewer_question(turns),
+                ),
+                "next_question": _stay_next_question(current_direction, answer),
+                "direction_done": False,
+            }
         )
-
-    for _attempt in range(2):
-        tool_events.clear()
-        tool_meta.clear()
-        opened_ids.clear()
-        opened_ids.update(used_exercise_ids(turns))
-        seen_tool_names.clear()
-        seed_topic_search()
+    else:
         try:
             raw_result = complete_json_with_tools(
                 system_prompt,
-                user_prompt + retry_hint,
+                user_prompt,
                 tools=turn_tools,
                 run_tool=run_tool,
-                max_tool_rounds=2,
+                max_tool_rounds=max_tool_rounds,
                 on_progress=on_progress,
             )
             result = TurnResult.model_validate(
@@ -965,77 +1112,10 @@ def run_turn(
                     answer=answer,
                 )
             )
-            break
         except (ValidationError, LLMError) as exc:
             last_error = exc
-            logger.warning("turn attempt failed: %s", exc)
-            retry_hint = (
-                "\n\n上次输出不合规或为空。请重新输出合法 JSON："
-                "thought 必须含评价、查代码、本方向结束；"
-                "不要把检索面经写进 thought；"
-                "不要建议或总评；next_question 必填，只问一个微步骤、一个问号、"
-                "大约 40 到 80 个汉字，不要分别/以及/同时，不要文件名行号。"
-            )
-    if result is None:
-        logger.warning("turn fallback after failed contract: %s", last_error)
-        result = fallback_turn_result(current_direction, answer)
-
-
-    inspect_query = fabricated_inspect_query(answer)
-    if inspect_query and not any(
-        event.get("name") == "code_inspect" for event in tool_events
-    ):
-        inspect = run_code_inspect_from_tool_args(
-            session["id"],
-            {"query": inspect_query},
-            clone_ok=session.get("clone_ok"),
-        )
-        model_text = inspect.for_model()
-        public_text = inspect.for_public() or "已核对仓库"
-        record_tool(
-            {
-                "name": "code_inspect",
-                "args": {"query": inspect_query},
-                "result": public_text,
-            },
-            {
-                "name": "code_inspect",
-                "args": {"query": inspect_query},
-                "result": model_text,
-            },
-        )
-
-    if allow_code_exercise and not any(
-        event.get("name") == "code_exercise" and event.get("payload")
-        for event in tool_events
-    ):
-        exercise_args = suggested_exercise or requested_code_exercise_args(answer)
-        if exercise_args:
-            opened = run_code_exercise_from_tool_args(
-                exercise_args,
-                used_ids=used_exercise_ids(turns),
-                role=session.get("role") or "",
-                direction_text=(
-                    f"{current_direction.get('title', '')} "
-                    f"{current_direction.get('goal', '')}"
-                ),
-            )
-            payload = opened.sse_payload()
-            if payload:
-                record_tool(
-                    {
-                        "name": "code_exercise",
-                        "args": exercise_args,
-                        "result": opened.for_public(),
-                        "payload": payload,
-                    },
-                    {
-                        "name": "code_exercise",
-                        "args": exercise_args,
-                        "result": opened.for_model(),
-                        "exercise_id": payload["exercise_id"],
-                    },
-                )
+            logger.warning("turn fallback after failed contract: %s", last_error)
+            result = fallback_turn_result(current_direction, answer)
 
     result = result.model_copy(
         update={"thought": _align_thought_with_tools(result.thought, tool_events)}
@@ -1079,6 +1159,17 @@ def run_turn(
         if EMPTY_REPHRASE_RE.search(result.next_question or ""):
             updates["next_question"] = _stay_next_question(current_direction, answer)
         result = result.model_copy(update=updates)
+
+    opened_now = _opened_exercise_event(tool_events)
+    if opened_now:
+        payload = opened_now.get("payload") or {}
+        result = result.model_copy(
+            update={
+                "next_question": _ensure_exercise_followup(
+                    result.next_question, payload
+                )
+            }
+        )
     return result, next_direction_id, {"events": tool_events, "meta": tool_meta}
 
 
