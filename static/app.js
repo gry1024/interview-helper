@@ -477,6 +477,7 @@ function closeCodeExercise(options = {}) {
     codeIde.hidden = true;
     codeIde.classList.remove("is-collapsed", "is-readonly");
     delete codeIde.dataset.ready;
+    delete codeIde.dataset.exerciseId;
   }
   setIdeLayoutOpen(false);
   if (codeIdeStatus) {
@@ -718,6 +719,11 @@ async function openCodeExercise(raw) {
   codeIde.hidden = false;
   codeIde.classList.remove("is-collapsed", "is-readonly");
   delete codeIde.dataset.ready;
+  if (codeExerciseState.exercise_id) {
+    codeIde.dataset.exerciseId = codeExerciseState.exercise_id;
+  } else {
+    delete codeIde.dataset.exerciseId;
+  }
   setIdeLayoutOpen(true);
   if (codeIdeTitle) {
     codeIdeTitle.textContent = codeExerciseState.title;
@@ -1243,6 +1249,8 @@ async function submitTurn(event) {
       ),
     );
     setTurnLoading(false);
+    // 手撕编辑器打开时对话失败不应关掉 IDE，占位符继续提示可边写边问
+    syncIdeChrome();
   }
 }
 
@@ -1830,6 +1838,17 @@ window.__interviewHelper = {
   },
   getCode() {
     return getEditorCode();
+  },
+  getExerciseState() {
+    return codeExerciseState
+      ? {
+          exercise_id: codeExerciseState.exercise_id,
+          title: codeExerciseState.title,
+          language: codeExerciseState.language,
+          submitted: codeExerciseState.submitted,
+          fallbackSubmit: codeExerciseState.fallbackSubmit,
+        }
+      : null;
   },
   tokenizePython(code) {
     return window.monaco?.editor.tokenize(code, "python") || [];
