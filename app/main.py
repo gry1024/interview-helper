@@ -26,7 +26,14 @@ from app.db import (
 )
 from app.db_reviews import get_review, list_reviews
 from app.llm import LLMError
-from app.models import DirectionPlan, SessionCreate, SessionCreated, TurnCreate
+from app.models import (
+    CodeSubmissionCreate,
+    DirectionPlan,
+    SessionCreate,
+    SessionCreated,
+    TurnCreate,
+)
+from app.tools.code_exercise import format_submission_answer, get_exercise
 from app.report import dump_end_snapshot
 from app.repository import (
     CloneResult,
@@ -257,21 +264,23 @@ def _sse_tool(name: str, args: dict[str, Any], result: str) -> str:
     return _sse("tool", {"name": name, "args": args, "result": result})
 
 
-def _chunk_thought(thought: str) -> list[str]:
-    pieces = [piece for piece in _THOUGHT_SPLIT.split(thought) if piece]
-    return pieces or [thought]
+def _sse_tool_events(tool_events: list[dict[str, Any]]) -> list[str]:
+    chunks: list[str] = []
+    for event in tool_events:
+        payload = event.get("payload")
+        if event.get("name") == "code_exercise" and isinstance(payload, dict):
+            chunks.append(_sse("code_exercise", payload))
+        chunks.append(
+            _sse_tool(
+                event.get("name") or "code_inspect",
+                event.get("args") or {},
+                event.get("result") or "",
+            )
+        )
+    return chunks
 
 
-@app.post("/api/sessions/{session_id}/turns")
-async def create_turn(
-    session_id: str,
-    payload: TurnCreate,
-    request: Request,
-) -> StreamingResponse:
-    """Stream one locked-topic interview turn as SSE."""
-
-    _enforce_write_rate_limit(request)
-    session = await asyncio.to_thread(get_session, session_id)
+def _require_live_session(session: dict[str, Any] | None, session_id: str) -> dict[str, Any]:
     if session is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="会话不存在")
     if session["status"] not in {"ready", "live"}:
@@ -284,7 +293,31 @@ async def create_turn(
             status_code=status.HTTP_409_CONFLICT,
             detail="本场已有一轮回答正在处理",
         )
+    return session
 
+
+def _chunk_thought(thought: str) -> list[str]:
+    pieces = [piece for piece in _THOUGHT_SPLIT.split(thought) if piece]
+    return pieces or [thought]
+
+
+def _turn_sse_headers() -> dict[str, str]:
+    return {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no",
+    }
+
+
+def _stream_run_turn(
+    *,
+    session_id: str,
+    session: dict[str, Any],
+    answer: str,
+    stored_answer: str | None = None,
+    user_meta: dict[str, Any] | None = None,
+    allow_code_exercise: bool = True,
+) -> StreamingResponse:
     _active_turns.add(session_id)
 
     async def event_stream() -> AsyncIterator[str]:
@@ -295,7 +328,8 @@ async def create_turn(
                     run_turn,
                     session=session,
                     turns=turns,
-                    answer=payload.answer,
+                    answer=answer,
+                    allow_code_exercise=allow_code_exercise,
                 )
             except LLMError:
                 yield _sse("error", {"message": "MiniMax 暂时无法继续追问，请稍后重试"})
@@ -309,12 +343,8 @@ async def create_turn(
 
             tool_events = tool_bundle.get("events") or []
             tool_meta = tool_bundle.get("meta") or []
-            for event in tool_events:
-                yield _sse_tool(
-                    event.get("name") or "code_inspect",
-                    event.get("args") or {},
-                    event.get("result") or "",
-                )
+            for chunk in _sse_tool_events(tool_events):
+                yield chunk
 
             for chunk in _chunk_thought(result.thought):
                 yield _sse("thought_delta", {"text": chunk})
@@ -323,12 +353,13 @@ async def create_turn(
             await asyncio.to_thread(
                 append_turn_bundle,
                 session_id=session_id,
-                user_answer=payload.answer,
+                user_answer=stored_answer if stored_answer is not None else answer,
                 thought=result.thought,
                 next_question=result.next_question,
                 direction_id=session["current_direction_id"],
                 next_direction_id=next_direction_id,
                 meta=tool_meta or None,
+                user_meta=user_meta,
             )
 
             yield _sse(
@@ -346,11 +377,53 @@ async def create_turn(
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
+        headers=_turn_sse_headers(),
+    )
+
+
+@app.post("/api/sessions/{session_id}/turns")
+async def create_turn(
+    session_id: str,
+    payload: TurnCreate,
+    request: Request,
+) -> StreamingResponse:
+    """Stream one locked-topic interview turn as SSE."""
+
+    _enforce_write_rate_limit(request)
+    session = _require_live_session(
+        await asyncio.to_thread(get_session, session_id),
+        session_id,
+    )
+    return _stream_run_turn(
+        session_id=session_id,
+        session=session,
+        answer=payload.answer,
+    )
+
+
+@app.post("/api/sessions/{session_id}/code-submissions")
+async def submit_code(
+    session_id: str,
+    payload: CodeSubmissionCreate,
+    request: Request,
+) -> StreamingResponse:
+    """Store a hand-written solution and continue the interview as a normal turn."""
+
+    _enforce_write_rate_limit(request)
+    exercise = get_exercise(payload.exercise_id)
+    if exercise is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="题库无此题")
+    session = _require_live_session(
+        await asyncio.to_thread(get_session, session_id),
+        session_id,
+    )
+    return _stream_run_turn(
+        session_id=session_id,
+        session=session,
+        answer=format_submission_answer(exercise, payload.code),
+        stored_answer=payload.code,
+        user_meta={"kind": "code_submission", "exercise_id": exercise.id},
+        allow_code_exercise=False,
     )
 
 

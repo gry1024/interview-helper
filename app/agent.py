@@ -16,6 +16,12 @@ from app.report import (
     compose_report_text,
     load_report_prompt,
 )
+from app.tools.code_exercise import (
+    CODE_EXERCISE_TOOL,
+    catalog_for_prompt,
+    run_code_exercise_from_tool_args,
+    used_exercise_ids,
+)
 from app.tools.code_inspect import (
     CODE_INSPECT_TOOL,
     run_code_inspect_from_tool_args,
@@ -439,8 +445,9 @@ def run_turn(
     session: dict[str, Any],
     turns: list[dict[str, Any]],
     answer: str,
+    allow_code_exercise: bool = True,
 ) -> tuple[TurnResult, str, dict[str, list[dict[str, Any]]]]:
-    """Produce one locked-topic turn; call code_inspect when the model asks."""
+    """Produce one locked-topic turn; call code_inspect / code_exercise when asked."""
 
     interviewer = (APP_DIR / "prompts" / "interviewer.md").read_text(encoding="utf-8")
     job_essence = (APP_DIR / "prompts" / "job_essence.md").read_text(encoding="utf-8")
@@ -449,6 +456,17 @@ def run_turn(
     current_direction = next(
         item for item in directions if item["id"] == current_direction_id
     )
+    if allow_code_exercise:
+        exercise_prompt = (
+            (APP_DIR / "prompts" / "code_exercise.md").read_text(encoding="utf-8")
+            + "\n"
+            + catalog_for_prompt()
+        )
+    else:
+        exercise_prompt = (
+            "本轮是手撕代码提交，根据代码文本评价，"
+            "不要再调用 code_exercise，不要假装编译运行。"
+        )
 
     system_prompt = f"""
 {interviewer}
@@ -468,6 +486,9 @@ def run_turn(
 仓库不在上下文中。要核对真伪或决定同方向怎么引，就调用 code_inspect。
 禁止把路径、文件名或行号写入 next_question；tool 结果只影响评价和引导，不得念出坐标。
 clone 不可用时 tool 会返回仓库不可用，面试继续，不要假装看过代码。
+需要核实「会不会写」且属于面经常考实现时，调用 code_exercise（exercise_id 或 topic）。
+服务端只从题库取题，禁止编题。同一场同一题不重复，一轮最多一题。
+{exercise_prompt}
 浅答、短答、只复述术语、第一次说不懂时，direction_done 必须是 false，next_question 必须仍锁在当前方向。
 只有学生明确表示不会/不知道且换说法仍空白，或当前 goal 的检查点都已问到，才允许 direction_done=true。
 direction_done=true 时，下一问只能是下一条已定方向的第一步；没有下一条就收束，禁止发明 d6 或任何新主线。
@@ -496,31 +517,78 @@ direction_done=true 时，下一问只能是下一条已定方向的第一步；
     retry_hint = ""
     tool_events: list[dict[str, Any]] = []
     tool_meta: list[dict[str, Any]] = []
+    opened_ids = used_exercise_ids(turns)
+    turn_tools = [CODE_INSPECT_TOOL]
+    if allow_code_exercise:
+        turn_tools = [CODE_INSPECT_TOOL, CODE_EXERCISE_TOOL]
 
     def run_tool(name: str, args: dict[str, Any]) -> str:
-        if name != "code_inspect":
-            text = "未知 tool，忽略。"
-            tool_meta.append({"name": name, "args": args, "result": text})
-            tool_events.append({"name": name, "args": args, "result": text})
-            return text
-        inspect = run_code_inspect_from_tool_args(
-            session["id"],
-            args,
-            clone_ok=session.get("clone_ok"),
-        )
-        model_text = inspect.for_model()
-        public_text = inspect.for_public()
-        tool_meta.append({"name": name, "args": args, "result": model_text})
-        tool_events.append({"name": name, "args": args, "result": public_text})
-        return model_text
+        if name == "code_inspect":
+            inspect = run_code_inspect_from_tool_args(
+                session["id"],
+                args,
+                clone_ok=session.get("clone_ok"),
+            )
+            model_text = inspect.for_model()
+            public_text = inspect.for_public()
+            tool_meta.append({"name": name, "args": args, "result": model_text})
+            tool_events.append({"name": name, "args": args, "result": public_text})
+            return model_text
+        if name == "code_exercise":
+            if not allow_code_exercise:
+                text = "本轮是代码提交评价，不要再打开手撕题。"
+                tool_meta.append({"name": name, "args": args, "result": text})
+                tool_events.append({"name": name, "args": args, "result": text})
+                return text
+            already_opened = any(
+                event.get("name") == "code_exercise" and event.get("payload")
+                for event in tool_events
+            )
+            opened = run_code_exercise_from_tool_args(
+                args,
+                used_ids=opened_ids,
+                role=session.get("role") or "",
+                direction_text=(
+                    f"{current_direction.get('title', '')} "
+                    f"{current_direction.get('goal', '')}"
+                ),
+                already_opened_this_turn=already_opened,
+            )
+            model_text = opened.for_model()
+            public_text = opened.for_public()
+            event: dict[str, Any] = {
+                "name": name,
+                "args": args,
+                "result": public_text,
+            }
+            payload = opened.sse_payload()
+            if payload:
+                event["payload"] = payload
+                opened_ids.add(payload["exercise_id"])
+            meta_item: dict[str, Any] = {
+                "name": name,
+                "args": args,
+                "result": model_text,
+            }
+            if payload:
+                meta_item["exercise_id"] = payload["exercise_id"]
+            tool_meta.append(meta_item)
+            tool_events.append(event)
+            return model_text
+        text = "未知 tool，忽略。"
+        tool_meta.append({"name": name, "args": args, "result": text})
+        tool_events.append({"name": name, "args": args, "result": text})
+        return text
 
     for _attempt in range(2):
         tool_events.clear()
         tool_meta.clear()
+        opened_ids.clear()
+        opened_ids.update(used_exercise_ids(turns))
         raw_result = complete_json_with_tools(
             system_prompt,
             user_prompt + retry_hint,
-            tools=[CODE_INSPECT_TOOL],
+            tools=turn_tools,
             run_tool=run_tool,
         )
         try:

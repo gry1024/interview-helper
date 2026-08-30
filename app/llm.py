@@ -113,7 +113,11 @@ def complete_json_with_tools(
     run_tool: ToolRunner,
     max_tool_rounds: int = 1,
 ) -> dict[str, Any]:
-    """One tool-enabled round, then continue and parse the existing turn JSON."""
+    """One tool-enabled round, then continue and parse the existing turn JSON.
+
+    The runner may expose multiple tools in one list (e.g. code_inspect 与
+    code_exercise 并列). This loop does not special-case names.
+    """
 
     messages: list[dict[str, Any]] = [
         {"role": "system", "content": system_prompt},

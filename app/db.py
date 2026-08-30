@@ -169,10 +169,16 @@ def append_turn_bundle(
     direction_id: str,
     next_direction_id: str,
     meta: list[dict[str, Any]] | None = None,
+    user_meta: dict[str, Any] | None = None,
 ) -> None:
     meta_json = (
         json.dumps(meta, ensure_ascii=False, separators=(",", ":"))
         if meta
+        else None
+    )
+    user_meta_json = (
+        json.dumps(user_meta, ensure_ascii=False, separators=(",", ":"))
+        if user_meta
         else None
     )
 
@@ -190,9 +196,9 @@ def append_turn_bundle(
             INSERT INTO turns (
                 session_id, seq, role, body, direction_id, meta_json
             )
-            VALUES (?, ?, 'user', ?, ?, NULL)
+            VALUES (?, ?, 'user', ?, ?, ?)
             """,
-            (session_id, user_seq, user_answer, direction_id),
+            (session_id, user_seq, user_answer, direction_id, user_meta_json),
         )
         connection.execute(
             """

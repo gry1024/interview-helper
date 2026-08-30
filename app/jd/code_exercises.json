@@ -1,0 +1,243 @@
+[
+  {
+    "id": "mha-forward",
+    "title": "手撕 Multi-Head Attention",
+    "prompt": "用 Python 实现 Multi-Head Attention 前向。输入 x 形状为 (batch, seq, d_model)，拆成 n_heads 后做 scaled dot-product，可选 mask，再拼回并做输出投影。只补全前向，不要写训练循环或无关算法。",
+    "language": "python",
+    "starter": "import math\n\nclass MultiHeadAttention:\n    def __init__(self, d_model, n_heads):\n        assert d_model % n_heads == 0\n        self.d_model = d_model\n        self.n_heads = n_heads\n        self.d_head = d_model // n_heads\n        # TODO: W_q / W_k / W_v / W_o\n\n    def forward(self, x, mask=None):\n        # x: (batch, seq, d_model) -> (batch, seq, d_model)\n        raise NotImplementedError\n",
+    "source_ids": [
+      "bytedance-llm-algorithm-intern-interview",
+      "bytedance-llm-daily-intern-interview",
+      "ctrip-large-model-intern-interview",
+      "alibaba-taotian-llm-intern-interview"
+    ],
+    "topics": [
+      "attention",
+      "multi-head",
+      "mha",
+      "self-attention",
+      "transformer"
+    ],
+    "roles": ["llm-algo", "training", "rag"]
+  },
+  {
+    "id": "scaled-dot-product",
+    "title": "手撕 Scaled Dot-Product Attention",
+    "prompt": "实现 scaled dot-product attention：scores = QK^T / sqrt(d_k)，再 softmax 得到权重并乘 V。解释并写出缩放，可选 mask。不要写完整 Multi-Head，不要写无关数据结构题。",
+    "language": "python",
+    "starter": "import math\n\ndef scaled_dot_product_attention(q, k, v, mask=None):\n    # q/k/v: (batch, heads, seq, d_k)\n    # return: (batch, heads, seq, d_k)\n    raise NotImplementedError\n",
+    "source_ids": [
+      "bytedance-llm-daily-intern-interview",
+      "alibaba-taotian-llm-intern-interview"
+    ],
+    "topics": [
+      "scaled",
+      "dot-product",
+      "attention",
+      "softmax",
+      "qkv"
+    ],
+    "roles": ["llm-algo", "training", "rag"]
+  },
+  {
+    "id": "causal-mask",
+    "title": "手撕 Decoder 因果注意力",
+    "prompt": "Decoder 里 QKV 来源不同：自回归时当前位不能看未来。实现因果 mask（下三角可见），并把它接到 scaled attention 上。对照面经里「QKV 分别来自哪、为什么要因果」。",
+    "language": "python",
+    "starter": "def causal_mask(seq_len):\n    # 返回 (1, 1, seq, seq) 或 (seq, seq)，未来位置应被挡住\n    raise NotImplementedError\n\ndef causal_self_attention(q, k, v):\n    # q/k/v: (batch, heads, seq, d_k)\n    raise NotImplementedError\n",
+    "source_ids": [
+      "bytedance-llm-daily-intern-interview",
+      "ctrip-large-model-intern-interview"
+    ],
+    "topics": [
+      "causal",
+      "decoder",
+      "mask",
+      "autoregressive",
+      "attention"
+    ],
+    "roles": ["llm-algo", "training"]
+  },
+  {
+    "id": "kv-cache-step",
+    "title": "手撕 KV Cache 单步更新",
+    "prompt": "实现推理时一步 decode 的 KV Cache：已有 past_k/past_v，本步只算当前 token 的 k/v，拼到 cache 后再算 attention。体现训练可并行、推理逐步读 cache 的差异，不要写训练 loop。",
+    "language": "python",
+    "starter": "def decode_step_with_kv_cache(q_step, k_step, v_step, past_k=None, past_v=None):\n    # q/k/v_step: (batch, heads, 1, d_k)\n    # past_*: (batch, heads, past_len, d_k) 或 None\n    # return attn_out, new_k, new_v\n    raise NotImplementedError\n",
+    "source_ids": [
+      "bytedance-llm-daily-intern-interview"
+    ],
+    "topics": [
+      "kv cache",
+      "kv-cache",
+      "cache",
+      "decode",
+      "inference"
+    ],
+    "roles": ["llm-algo", "training"]
+  },
+  {
+    "id": "rope-apply",
+    "title": "手撕 RoPE",
+    "prompt": "实现 RoPE：按偶数维把 (q,k) 两两分组，用 cos/sin 旋转。输入 q/k 为 (batch, seq, n_heads, d_head)。对照 LLaMA 类架构的位置编码，不要写完整 Transformer。",
+    "language": "python",
+    "starter": "import math\n\ndef build_rope_cache(seq_len, d_head, base=10000.0):\n    # return cos, sin，形状能广播到 (seq, d_head)\n    raise NotImplementedError\n\ndef apply_rope(q, k, cos, sin):\n    # q/k: (batch, seq, n_heads, d_head)\n    raise NotImplementedError\n",
+    "source_ids": [
+      "ctrip-large-model-intern-interview",
+      "bytedance-llm-daily-intern-interview"
+    ],
+    "topics": [
+      "rope",
+      "rotary",
+      "position",
+      "llama"
+    ],
+    "roles": ["llm-algo", "training"]
+  },
+  {
+    "id": "rmsnorm-forward",
+    "title": "手撕 RMSNorm",
+    "prompt": "实现 RMSNorm：按最后一维做均方根归一，再乘可学习 weight，不加 bias。这是 LLaMA 相对 GPT LayerNorm 的常见差异，只写 forward。",
+    "language": "python",
+    "starter": "class RMSNorm:\n    def __init__(self, dim, eps=1e-6):\n        self.eps = eps\n        self.weight = [1.0] * dim\n\n    def forward(self, x):\n        # x: (..., dim) -> 同形状\n        raise NotImplementedError\n",
+    "source_ids": [
+      "ctrip-large-model-intern-interview"
+    ],
+    "topics": [
+      "rmsnorm",
+      "rms",
+      "norm",
+      "llama"
+    ],
+    "roles": ["llm-algo", "training"]
+  },
+  {
+    "id": "swiglu-ffn",
+    "title": "手撕 SwiGLU FFN",
+    "prompt": "实现 SwiGLU 前馈：gate = silu(xW_gate)，up = xW_up，输出 (gate * up) W_down。对照 LLaMA FFN，不要写成普通 ReLU FFN，不要写注意力。",
+    "language": "python",
+    "starter": "def silu(x):\n    raise NotImplementedError\n\nclass SwiGLUFFN:\n    def __init__(self, d_model, d_ff):\n        self.d_model = d_model\n        self.d_ff = d_ff\n        # TODO: W_gate / W_up / W_down\n\n    def forward(self, x):\n        # x: (batch, seq, d_model)\n        raise NotImplementedError\n",
+    "source_ids": [
+      "ctrip-large-model-intern-interview"
+    ],
+    "topics": [
+      "swiglu",
+      "ffn",
+      "gate",
+      "llama",
+      "mlp"
+    ],
+    "roles": ["llm-algo", "training"]
+  },
+  {
+    "id": "lora-linear",
+    "title": "手撕 LoRA 线性层",
+    "prompt": "实现 LoRA：冻结 W，增加低秩 A/B，前向为 xW + scale * xA B。写出初始化习惯（A 随机、B 置零）和 scale=alpha/rank。对照面经里的插入层与 rank，不要写完整训练器。",
+    "language": "python",
+    "starter": "class LoRALinear:\n    def __init__(self, in_dim, out_dim, rank, alpha):\n        self.rank = rank\n        self.alpha = alpha\n        self.scale = alpha / rank\n        # TODO: 冻结 W，以及 A:(in,rank) B:(rank,out)\n\n    def forward(self, x):\n        # x: (..., in_dim) -> (..., out_dim)\n        raise NotImplementedError\n",
+    "source_ids": [
+      "bytedance-llm-algorithm-intern-interview",
+      "bytedance-llm-daily-intern-interview",
+      "meituan-llm-intern-interview",
+      "ctrip-large-model-intern-interview"
+    ],
+    "topics": [
+      "lora",
+      "adapter",
+      "rank",
+      "finetune",
+      "qlora"
+    ],
+    "roles": ["llm-algo", "training", "rag"]
+  },
+  {
+    "id": "tokenizer-bpe-merge",
+    "title": "手撕 BPE 一步合并",
+    "prompt": "实现 tokenizer 的 BPE 一步：给定 token 序列和 merge 表 (left,right)->new_id，从左到右合并第一处命中的相邻对。用来核对 embedding 之前「文本怎么变成 token id」，不要写完整词表训练。",
+    "language": "python",
+    "starter": "def bpe_merge_once(token_ids, merges):\n    # token_ids: list[int]\n    # merges: dict[tuple[int, int], int]\n    # 只合并最左第一处命中，返回新序列\n    raise NotImplementedError\n",
+    "source_ids": [
+      "bytedance-llm-algorithm-intern-interview",
+      "alibaba-taotian-llm-intern-interview"
+    ],
+    "topics": [
+      "tokenizer",
+      "bpe",
+      "vocab",
+      "encode",
+      "embedding"
+    ],
+    "roles": ["llm-algo", "training", "rag"]
+  },
+  {
+    "id": "mqa-forward",
+    "title": "手撕 Multi-Query Attention",
+    "prompt": "实现 MQA：Q 仍是 n_heads，K/V 只有 1 个头并广播到各 Q 头。对照面经里 multi-query 后 decoder 延迟/显存变化，不要写成普通 MHA。",
+    "language": "python",
+    "starter": "def multi_query_attention(q, k, v, mask=None):\n    # q: (batch, n_heads, seq_q, d_k)\n    # k/v: (batch, 1, seq_k, d_k)\n    raise NotImplementedError\n",
+    "source_ids": [
+      "bytedance-llm-algorithm-intern-interview"
+    ],
+    "topics": [
+      "mqa",
+      "multi-query",
+      "attention",
+      "latency"
+    ],
+    "roles": ["llm-algo", "training"]
+  },
+  {
+    "id": "gqa-repeat-kv",
+    "title": "手撕 GQA 的 KV 头复制",
+    "prompt": "Grouped Query Attention：n_q 个头、n_kv 个头，且 n_q 能被 n_kv 整除。把 KV 头复制/展开到与 Q 头对齐后再做 attention。这是 MQA 到 MHA 之间的折中，对面经里的 decoder 延迟追问。",
+    "language": "python",
+    "starter": "def repeat_kv(x, n_rep):\n    # x: (batch, n_kv, seq, d_k) -> (batch, n_kv * n_rep, seq, d_k)\n    raise NotImplementedError\n\ndef grouped_query_attention(q, k, v, mask=None):\n    # q: (batch, n_q, seq, d_k); k/v: (batch, n_kv, seq, d_k)\n    raise NotImplementedError\n",
+    "source_ids": [
+      "bytedance-llm-algorithm-intern-interview",
+      "bytedance-llm-daily-intern-interview"
+    ],
+    "topics": [
+      "gqa",
+      "grouped",
+      "kv",
+      "attention"
+    ],
+    "roles": ["llm-algo", "training"]
+  },
+  {
+    "id": "paged-kv-lookup",
+    "title": "手撕 PagedAttention 块表取 KV",
+    "prompt": "简化 vLLM PagedAttention：物理 KV 存在固定大小的 block 池里，逻辑序列用 block_table 记录块号。按 table 把逻辑位置的 k/v 取出，拼成连续 cache 再算一步 attention。不要实现完整调度器。",
+    "language": "python",
+    "starter": "def gather_kv_from_blocks(k_blocks, v_blocks, block_table, seq_len, block_size):\n    # k/v_blocks: (n_blocks, block_size, n_heads, d_k)\n    # block_table: list[int]，逻辑块 -> 物理块号\n    # return k,v 形状 (seq_len, n_heads, d_k)\n    raise NotImplementedError\n",
+    "source_ids": [
+      "tencent-llm-algorithm-second-interview"
+    ],
+    "topics": [
+      "pagedattention",
+      "paged",
+      "vllm",
+      "block table",
+      "kv"
+    ],
+    "roles": ["llm-algo", "training"]
+  },
+  {
+    "id": "softmax-stable",
+    "title": "手撕数值稳定 Softmax",
+    "prompt": "实现沿最后一维的数值稳定 softmax：先减该维最大值再 exp 归一。这是 scaled attention 里防止溢出的基本功，对照「Attention 为什么要做 scaled」的计算细节。",
+    "language": "python",
+    "starter": "import math\n\ndef softmax_stable(logits):\n    # logits: 任意至少 1 维的嵌套 list / 最后一维归一\n    # 先减 max 再 exp，返回同形状概率\n    raise NotImplementedError\n",
+    "source_ids": [
+      "bytedance-llm-daily-intern-interview",
+      "alibaba-taotian-llm-intern-interview"
+    ],
+    "topics": [
+      "softmax",
+      "numerical",
+      "stable",
+      "attention"
+    ],
+    "roles": ["llm-algo", "training", "rag"]
+  }
+]

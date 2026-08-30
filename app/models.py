@@ -96,6 +96,21 @@ class TurnCreate(BaseModel):
         return _validate_user_text(value, "回答")
 
 
+class CodeSubmissionCreate(BaseModel):
+    exercise_id: str = Field(min_length=1, max_length=64)
+    code: str = Field(min_length=1, max_length=32000)
+
+    @field_validator("exercise_id")
+    @classmethod
+    def validate_exercise_id(cls, value: str) -> str:
+        return _validate_user_text(value, "题目 id")
+
+    @field_validator("code")
+    @classmethod
+    def validate_code(cls, value: str) -> str:
+        return _validate_user_text(value, "代码")
+
+
 class TurnResult(BaseModel):
     thought: str = Field(min_length=8, max_length=4000)
     direction_done: bool

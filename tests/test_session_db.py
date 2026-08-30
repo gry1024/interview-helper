@@ -98,3 +98,41 @@ def test_append_turn_bundle_keeps_full_text_and_can_switch_direction(
     assert turns[2]["body"] == thought
     assert turns[3]["body"] == next_question
     assert turns[3]["direction_id"] == "d2"
+
+
+def test_append_turn_bundle_can_store_user_meta(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "app.db")
+    db.init_db()
+    directions = [
+        {"id": "d1", "title": "架构", "goal": "问清输入到注意力"},
+        {"id": "d2", "title": "训练", "goal": "问清训练阶段衔接"},
+        {"id": "d3", "title": "数据", "goal": "问清数据质量验证"},
+    ]
+    db.create_session(
+        session_id="session-code-meta",
+        github_url="https://github.com/owner/repo",
+        statement="原文",
+        role="llm-algo",
+        directions=directions,
+        clone_path=None,
+        clone_ok=False,
+        first_question="一个 token ID 先如何变成向量？",
+    )
+    code = "class MultiHeadAttention:\n    pass\n"
+    db.append_turn_bundle(
+        session_id="session-code-meta",
+        user_answer=code,
+        thought="评价：只写了类名。\n查代码：否\n本方向结束：否，因为还没问完。",
+        next_question="QKV 投影之后，score 怎么缩放？",
+        direction_id="d1",
+        next_direction_id="d1",
+        user_meta={"kind": "code_submission", "exercise_id": "mha-forward"},
+    )
+    turns = db.list_turns("session-code-meta")
+    user = next(item for item in turns if item["role"] == "user")
+    assert user["body"] == code
+    assert user["meta"] == {"kind": "code_submission", "exercise_id": "mha-forward"}
+    assert db.get_session("session-code-meta")["status"] == "live"
