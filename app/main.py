@@ -851,7 +851,8 @@ async def end_session(session_id: str, request: Request) -> StreamingResponse:
                     report_text=report_text,
                     snapshot_json=snapshot_json,
                 )
-            except LLMError:
+            except LLMError as exc:
+                logger.warning("end report stream LLMError: %s", exc, exc_info=True)
                 yield _sse("error", {"message": "MiniMax 暂时无法生成报告，请稍后重试"})
                 yield _sse("done", {})
                 return

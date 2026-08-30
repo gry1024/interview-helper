@@ -178,16 +178,31 @@ def test_load_review_for_replay_does_not_call_generators(monkeypatch) -> None:
     assert report.snapshot_to_json(loaded) == raw
 
 
-def test_compose_report_text_keeps_verbatim_and_rejects_missing_section() -> None:
+def test_compose_report_text_keeps_verbatim_and_rejects_empty() -> None:
     report_text = _sample_report()
     assert report.compose_report_text(report_text) == report_text
-    with pytest.raises(ValueError, match="岗位匹配"):
-        report.compose_report_text("## 总评\n整场主档：真不懂\n只有总评")
-    with pytest.raises(ValueError, match="整场主档"):
-        report.compose_report_text(
-            "## 总评\n没有主档\n\n## 岗位匹配\n对照\n\n"
-            "## 知识建议\n建议\n\n## 项目改良\n改造"
-        )
+    with pytest.raises(ValueError, match="不能为空"):
+        report.compose_report_text("")
+    with pytest.raises(ValueError, match="必要段落"):
+        report.compose_report_text("这不是报告，也没有段落标题")
+
+
+def test_salvage_fills_missing_section_and_primary_band() -> None:
+    filled_sections = report.compose_report_text(
+        "## 总评\n整场主档：真不懂\n只有总评"
+    )
+    assert report.extract_primary_band(filled_sections) == "真不懂"
+    assert report._has_section_title(filled_sections, "岗位匹配")
+    assert report._has_section_title(filled_sections, "知识建议")
+    assert report._has_section_title(filled_sections, "项目改良")
+    assert "不编造仓库没有的实现" in filled_sections
+
+    filled_band = report.compose_report_text(
+        "## 总评\n没有主档\n\n## 岗位匹配\n对照\n\n"
+        "## 知识建议\n建议\n\n## 项目改良\n改造"
+    )
+    assert report.extract_primary_band(filled_band) == "真不懂"
+    assert "没有主档" in filled_band
 
 
 def test_compose_report_accepts_legacy_job_essence_heading() -> None:
@@ -217,3 +232,17 @@ def test_salvage_closes_hanging_quote_in_job_match() -> None:
     third = closed.split("岗位在意但本项目没有")[-1].split("## 知识建议")[0]
     assert len(re.sub(r"[：:「“\"\s]", "", third)) >= 4
     assert "岗位匹配" in closed
+
+
+def test_end_report_context_truncates_long_thought_keeps_qa() -> None:
+    session = _sample_session()
+    turns = _sample_turns()
+    turns[2]["body"] = "思考占位" * 20_000
+    context = json.loads(report.build_end_report_context(session, turns))
+    assert context["turns"][1]["body"] == turns[1]["body"]
+    assert context["turns"][0]["body"] == turns[0]["body"]
+    assert len(context["turns"][2]["body"]) < len(turns[2]["body"])
+    assert "思考已截断" in context["turns"][2]["body"]
+
+    snapshot = report.assemble_review_snapshot(session, turns, _sample_report())
+    assert snapshot.turns[2].body == turns[2]["body"]

@@ -57,6 +57,28 @@ PRIMARY_BAND_RANK = {
     "真不懂": 1,
     "项目里没有": 1,
 }
+END_REPORT_CONTEXT_MAX_CHARS = 48_000
+COMPACT_THOUGHT_CHARS = 600
+COMPACT_META_CHARS = 400
+FALLBACK_PRIMARY_BAND = "真不懂"
+SECTION_STUBS = {
+    "总评": (
+        f"整场主档：{FALLBACK_PRIMARY_BAND}\n"
+        "本场模型报告不完整，依据仅限已写出的总评与问答痕迹；"
+        "不编造仓库没有的实现。"
+    ),
+    "岗位匹配": (
+        "已经覆盖：以本场已写出内容为限。\n"
+        "口头能讲、仓库撑不住：本场未核到可写进报告的对照。\n"
+        "岗位在意但本项目没有：本场未再展开到可核的岗位筛选项；"
+        "不编造仓库没有的实现。"
+    ),
+    "知识建议": (
+        "用本场已经问到的项目对象把没讲清的机制补成一条链；"
+        "不编造仓库没有的实现。"
+    ),
+    "项目改良": "只改本场问到且仓库能对上的最小缺口；不新开仓库没有的能力。",
+}
 
 
 def load_report_prompt() -> str:
@@ -129,9 +151,7 @@ def _close_job_match_body(section: str) -> str:
     return body
 
 
-def salvage_truncated_report(text: str) -> str:
-    """Close a truncated 岗位匹配 section so it does not end on an opening quote."""
-
+def _close_truncated_job_match(text: str) -> str:
     blob = text or ""
     heading = JOB_MATCH_HEADING.search(blob)
     if heading is None:
@@ -145,6 +165,40 @@ def salvage_truncated_report(text: str) -> str:
         section = blob[start:]
         suffix = ""
     return blob[:start] + _close_job_match_body(section) + suffix
+
+
+def _inject_primary_band(text: str) -> str:
+    if PRIMARY_BAND_RE.search(text or ""):
+        return text
+    heading = re.search(
+        r"^#{1,6}\s*(?:总评|综合评价|整体评价)\s*$",
+        text or "",
+        re.M,
+    )
+    if heading:
+        return (
+            text[: heading.end()]
+            + f"\n整场主档：{FALLBACK_PRIMARY_BAND}\n"
+            + text[heading.end() :]
+        )
+    return f"整场主档：{FALLBACK_PRIMARY_BAND}\n{text}"
+
+
+def salvage_truncated_report(text: str) -> str:
+    """Repair truncated or incomplete reports so compose_report_text can accept them.
+
+    Closes a hanging 岗位匹配 quote, injects 整场主档 into 总评 when missing,
+    and appends short stub sections. Does not invent repository implementations.
+    Unrelated prose with no section headings is left unchanged.
+    """
+
+    blob = _close_truncated_job_match(text or "")
+    if not any(_has_section_title(blob, title) for title in REPORT_SECTION_TITLES):
+        return blob
+    for title in REPORT_SECTION_TITLES:
+        if not _has_section_title(blob, title):
+            blob = blob.rstrip() + f"\n\n## {title}\n\n{SECTION_STUBS[title]}\n"
+    return _inject_primary_band(blob)
 
 
 def compose_report_text(model_output: str) -> str:
@@ -185,14 +239,48 @@ def build_report_from_parts(
     )
 
 
-def build_end_report_context(
+def _compact_meta(meta: Any) -> Any:
+    if isinstance(meta, list):
+        return [_compact_meta(item) for item in meta]
+    if isinstance(meta, dict):
+        compacted = dict(meta)
+        result = compacted.get("result")
+        if isinstance(result, str) and len(result) > COMPACT_META_CHARS:
+            compacted["result"] = result[:COMPACT_META_CHARS] + "…（meta 已截断）"
+        return compacted
+    if isinstance(meta, str) and len(meta) > COMPACT_META_CHARS:
+        return meta[:COMPACT_META_CHARS] + "…（meta 已截断）"
+    return meta
+
+
+def _end_report_turn_payload(turn: Mapping[str, Any], *, compact: bool) -> dict[str, Any]:
+    body = turn["body"]
+    role = turn["role"]
+    if (
+        compact
+        and role == "thought"
+        and isinstance(body, str)
+        and len(body) > COMPACT_THOUGHT_CHARS
+    ):
+        body = body[:COMPACT_THOUGHT_CHARS] + "…（思考已截断，问答原话保留）"
+    meta = _as_meta(turn)
+    return {
+        "seq": turn["seq"],
+        "role": role,
+        "body": body,
+        "direction_id": turn.get("direction_id"),
+        "meta": _compact_meta(meta) if compact else meta,
+    }
+
+
+def _end_report_payload(
     session: Mapping[str, Any],
     turns: Sequence[Mapping[str, Any]],
-    helps: Sequence[Mapping[str, Any]] | None = None,
-) -> str:
-    """User payload for the future end-report LLM call. No bodies omitted."""
-
-    payload = {
+    helps: Sequence[Mapping[str, Any]] | None,
+    *,
+    compact: bool,
+) -> dict[str, Any]:
+    return {
         "role": session["role"],
         "role_label": role_label(str(session["role"])),
         "statement": session["statement"],
@@ -209,18 +297,118 @@ def build_end_report_context(
             }
             for item in (helps or [])
         ],
-        "turns": [
-            {
-                "seq": turn["seq"],
-                "role": turn["role"],
-                "body": turn["body"],
-                "direction_id": turn.get("direction_id"),
-                "meta": _as_meta(turn),
-            }
-            for turn in turns
-        ],
+        "turns": [_end_report_turn_payload(turn, compact=compact) for turn in turns],
     }
-    return json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+
+
+def build_end_report_context(
+    session: Mapping[str, Any],
+    turns: Sequence[Mapping[str, Any]],
+    helps: Sequence[Mapping[str, Any]] | None = None,
+) -> str:
+    """User payload for the end-report LLM call.
+
+    Q&A bodies stay verbatim. Over-long thought/meta are compacted only when
+    the JSON would otherwise exceed END_REPORT_CONTEXT_MAX_CHARS.
+    """
+
+    payload = _end_report_payload(session, turns, helps, compact=False)
+    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    if len(raw) <= END_REPORT_CONTEXT_MAX_CHARS:
+        return raw
+    return json.dumps(
+        _end_report_payload(session, turns, helps, compact=True),
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+
+
+def infer_fallback_primary_band(
+    session: Mapping[str, Any],
+    turns: Sequence[Mapping[str, Any]],
+    helps: Sequence[Mapping[str, Any]] | None = None,
+) -> str:
+    """Conservative band when MiniMax cannot produce a contract-valid report.
+
+    Never defaults to 真懂 or 懂但讲不出. Help count cannot raise the band.
+    """
+
+    del session
+    user_text = "\n".join(
+        str(turn.get("body") or "") for turn in turns if turn.get("role") == "user"
+    )
+    evidence_text = "\n".join(
+        str(turn.get("body") or "") for turn in turns if turn.get("role") == "thought"
+    )
+    for turn in turns:
+        meta = _as_meta(turn)
+        if isinstance(meta, list):
+            for item in meta:
+                if isinstance(item, dict):
+                    evidence_text += "\n" + str(item.get("result") or "")
+        elif isinstance(meta, str):
+            evidence_text += "\n" + meta
+
+    claimed_absent = any(
+        token in user_text for token in ("rerank", "万卡", "分布式")
+    ) and any(
+        token in evidence_text for token in ("未把", "未体现", "仓库未", "没有写成")
+    )
+    if claimed_absent:
+        return "项目里没有"
+    if helps:
+        return FALLBACK_PRIMARY_BAND
+    if any(token in user_text for token in ("不太懂", "不会", "不知道", "没做过", "不清楚")):
+        return FALLBACK_PRIMARY_BAND
+    return FALLBACK_PRIMARY_BAND
+
+
+def build_fallback_report(
+    session: Mapping[str, Any],
+    turns: Sequence[Mapping[str, Any]],
+    helps: Sequence[Mapping[str, Any]] | None = None,
+) -> str:
+    """Assemble a contract-valid four-section report from this session only."""
+
+    band = infer_fallback_primary_band(session, turns, helps)
+    qa_lines: list[str] = []
+    for turn in turns:
+        role = turn.get("role")
+        body = str(turn.get("body") or "").strip()
+        if role not in {"interviewer", "user"} or not body:
+            continue
+        label = "问" if role == "interviewer" else "答"
+        qa_lines.append(f"{label}：{body}")
+    qa_block = "\n".join(qa_lines[:8]) or "本场问答原文不足，无法展开。"
+    help_count = len(helps or [])
+    help_note = f"本场求助老师 {help_count} 次。" if help_count else ""
+    statement = str(session.get("statement") or "").strip()
+    statement_bit = statement[:120] if statement else "本场项目陈述为空"
+    overall = (
+        f"整场主档：{band}\n"
+        "结束时模型未能写出合格报告，以下只依据本场问答原句，"
+        f"不编造仓库没有的实现。{help_note}\n"
+        f"{qa_block}"
+    )
+    return compose_report_text(
+        build_report_from_parts(
+            overall=overall,
+            job_essence_compare=(
+                f"已经覆盖：项目陈述提到「{statement_bit}」。\n"
+                "口头能讲、仓库撑不住：以本场回答原句为限，未再核到可写进报告的对照。\n"
+                "岗位在意但本项目没有：本场未再展开到可核的岗位筛选项；"
+                "不编造仓库没有的实现。"
+            ),
+            knowledge_advice=(
+                "对照本场提问，用项目里真实出现的对象把没讲清的机制补成一条链；"
+                "不要只报组件名。不编造仓库没有的实现。"
+            ),
+            project_improve=(
+                "只改本场已经问到、仓库里能对上的最小缺口；"
+                "不新开仓库没有的能力，也不建议重写仓库。"
+            ),
+        )
+    )
 
 
 def assemble_review_snapshot(

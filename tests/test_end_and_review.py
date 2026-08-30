@@ -10,7 +10,14 @@ from app import db
 from app import main as main_mod
 from app.agent import write_report
 from app.db_reviews import ReviewAlreadyExistsError, get_review, save_review
-from app.report import dump_end_snapshot
+from app.llm import LLMError
+from app.report import (
+    REPORT_SECTION_TITLES,
+    _has_section_title,
+    compose_report_text,
+    dump_end_snapshot,
+    extract_primary_band,
+)
 from tests.test_report_snapshot import (
     MIND_STATEMENT,
     _sample_report,
@@ -245,3 +252,87 @@ def test_write_report_loads_report_prompt_not_interviewer(monkeypatch) -> None:
     context = json.loads(captured["user"][start : end + 1])
     assert context["statement"] == MIND_STATEMENT
     assert "总评" in captured["system"]
+
+
+def test_write_report_falls_back_when_minimax_fails_twice(monkeypatch) -> None:
+    calls = {"n": 0}
+
+    def boom(*_args, **_kwargs):
+        calls["n"] += 1
+        raise LLMError("MiniMax returned an empty response")
+
+    monkeypatch.setattr("app.agent.complete_text_with_tools", boom)
+    text, tools = write_report(_sample_session(), _sample_turns())
+    assert calls["n"] == 2
+    assert compose_report_text(text) == text
+    assert extract_primary_band(text) in {"真不懂", "项目里没有"}
+    for title in REPORT_SECTION_TITLES:
+        assert _has_section_title(text, title)
+    assert tools["events"] == []
+
+
+def test_write_report_returns_valid_report_when_sections_or_band_missing(
+    monkeypatch,
+) -> None:
+    replies = iter(
+        [
+            "## 总评\n整场主档：真不懂\n只有总评",
+            "## 总评\n没有主档\n\n## 岗位匹配\n对照\n\n"
+            "## 知识建议\n建议\n\n## 项目改良\n改造",
+        ]
+    )
+
+    def incomplete(*_args, **_kwargs):
+        return next(replies)
+
+    monkeypatch.setattr("app.agent.complete_text_with_tools", incomplete)
+    text, _tools = write_report(_sample_session(), _sample_turns())
+    assert compose_report_text(text) == text
+    assert extract_primary_band(text) == "真不懂"
+    for title in REPORT_SECTION_TITLES:
+        assert _has_section_title(text, title)
+
+
+def test_write_report_falls_back_on_garbage_text(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.agent.complete_text_with_tools",
+        lambda *_args, **_kwargs: "这不是报告",
+    )
+    text, _tools = write_report(_sample_session(), _sample_turns())
+    assert compose_report_text(text) == text
+    assert extract_primary_band(text) in {"真不懂", "项目里没有"}
+    assert "模型未能写出合格报告" in text
+
+
+def test_end_endpoint_fallback_still_saves_review(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "app.db")
+    db.init_db()
+    _seed_live_session("session-end-fallback")
+    main_mod._write_requests.clear()
+    main_mod._active_turns.clear()
+    def boom(*_args, **_kwargs):
+        raise LLMError("MiniMax returned an empty response")
+
+    monkeypatch.setattr("app.agent.complete_text_with_tools", boom)
+
+    with TestClient(main_mod.app) as client:
+        response = client.post("/api/sessions/session-end-fallback/end")
+        assert response.status_code == 200
+        body = response.text
+        assert "event: done" in body
+        assert "event: error" not in body
+        assert "event: report_delta" in body
+        assert "整场主档" in body
+
+        stored = db.get_session("session-end-fallback")
+        review = get_review("session-end-fallback")
+        assert stored is not None and stored["status"] == "ended"
+        assert review is not None
+        assert extract_primary_band(review["report_text"]) in {"真不懂", "项目里没有"}
+        detail = client.get("/api/reviews/session-end-fallback")
+        assert detail.status_code == 200
+        replayed = json.loads(detail.text)
+        assert replayed["report"]["text"] == review["report_text"]
+        live_turns = db.list_turns("session-end-fallback")
+        for turn in live_turns:
+            assert replayed["turns"][turn["seq"]]["body"] == turn["body"]

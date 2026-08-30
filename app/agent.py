@@ -12,6 +12,7 @@ from app.llm import LLMError, complete_json, complete_json_with_tools, complete_
 from app.models import BROAD_TURN_QUESTION, CODE_COORDINATE, DirectionPlan, TurnResult
 from app.report import (
     build_end_report_context,
+    build_fallback_report,
     build_report_from_parts,
     compose_report_text,
     load_report_prompt,
@@ -1599,17 +1600,17 @@ clone 不可用时 tool 会返回仓库不可用，仍按口头回答评估，�
     for _attempt in range(2):
         tool_events.clear()
         tool_meta.clear()
-        raw_report = complete_text_with_tools(
-            system_prompt,
-            user_prompt + retry_hint,
-            tools=[CODE_INSPECT_TOOL],
-            run_tool=run_tool,
-            max_tokens=8192,
-        )
         try:
+            raw_report = complete_text_with_tools(
+                system_prompt,
+                user_prompt + retry_hint,
+                tools=[CODE_INSPECT_TOOL],
+                run_tool=run_tool,
+                max_tokens=8192,
+            )
             report_text = _parse_report_output(raw_report)
             break
-        except ValueError as exc:
+        except (ValueError, LLMError) as exc:
             last_error = exc
             logger.warning("end report failed section contract: %s", exc)
             retry_hint = (
@@ -1619,5 +1620,10 @@ clone 不可用时 tool 会返回仓库不可用，仍按口头回答评估，�
                 "总评第一句必须是「整场主档：」加上四档之一。"
             )
     if report_text is None:
-        raise LLMError("MiniMax end report did not match the contract") from last_error
+        logger.warning(
+            "end report fallback after MiniMax failure: %s",
+            last_error,
+            exc_info=last_error,
+        )
+        report_text = build_fallback_report(session, turns, helps)
     return report_text, {"events": tool_events, "meta": tool_meta}
