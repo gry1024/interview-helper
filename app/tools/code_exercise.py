@@ -26,10 +26,10 @@ CODE_EXERCISE_TOOL: dict[str, object] = {
     "function": {
         "name": "code_exercise",
         "description": (
-            "从已搜集面经题库打开一道 Python 手撕题（注意力、RoPE、RMSNorm、"
-            "SwiGLU、KV Cache、LoRA、tokenizer 等）。用于核实会不会写。"
+            "聊到面经常考的具体实现（RoPE、MHA、RMSNorm、KV Cache、LoRA 等）"
+            "时必须打开题库手撕，不要只口头连问细节。"
             "必须带 exercise_id 或 topic；禁止自拟题面或出无关算法题。"
-            "同一场同一题不重复，一轮最多一题。"
+            "同一场同一题不重复，一轮最多一题。题已打开或已交过就不要再调。"
         ),
         "parameters": {
             "type": "object",
@@ -79,7 +79,8 @@ class CodeExerciseOpen:
         if not self.ok or self.exercise is None:
             return (
                 f"ok=false\nerror={self.error or ERROR_NO_TOPIC_MATCH}\n"
-                "不要现场编题，只能从题库选题；匹配失败就继续口头追问。"
+                "不要现场编题。题已打开或匹配失败就继续口头追问，"
+                "必须输出带 next_question 的 JSON，不要只写 thought。"
             )
         exercise = self.exercise
         return (
@@ -195,7 +196,12 @@ def _collect_used_id(used: set[str], item: Mapping[str, Any]) -> None:
         used.add(str(item["exercise_id"]))
     if item.get("name") == "code_exercise":
         args = item.get("args") if isinstance(item.get("args"), Mapping) else {}
-        candidate = item.get("exercise_id") or args.get("exercise_id")
+        payload = item.get("payload") if isinstance(item.get("payload"), Mapping) else {}
+        candidate = (
+            item.get("exercise_id")
+            or args.get("exercise_id")
+            or payload.get("exercise_id")
+        )
         if candidate:
             used.add(str(candidate))
 
@@ -203,6 +209,59 @@ def _collect_used_id(used: set[str], item: Mapping[str, Any]) -> None:
 def _normalize(text: str) -> str:
     lowered = text.casefold()
     return re.sub(r"[\s_\-/]+", " ", lowered).strip()
+
+
+STRONG_TOPIC_ALIASES: dict[str, tuple[str, ...]] = {
+    "rope-apply": ("rope", "rotary", "旋转位置编码"),
+    "rmsnorm-forward": ("rmsnorm", "rms norm"),
+    "swiglu-ffn": ("swiglu",),
+    "kv-cache-step": ("kv cache", "kv-cache"),
+    "lora-linear": ("lora", "qlora"),
+    "mha-forward": ("multi-head", "multihead", "mha", "多头注意力"),
+    "scaled-dot-product": ("scaled dot", "scaled attention"),
+    "causal-mask": ("causal mask", "因果 mask", "因果mask"),
+    "tokenizer-bpe-merge": ("bpe", "tokenizer"),
+    "mqa-forward": ("mqa", "multi-query", "multi query"),
+    "gqa-repeat-kv": ("gqa", "grouped query"),
+    "paged-kv-lookup": ("pagedattention", "paged attention", "block table"),
+    "softmax-stable": ("数值稳定 softmax", "stable softmax"),
+}
+IMPLEMENTATION_DEPTH = re.compile(
+    r"实现|手写|怎么写|怎么算|前向|公式|旋转|旋的是|加在哪|"
+    r"apply_?rope|偶数维|两两|分组|"
+    r"q\s*/\s*k|q 和 k|qkv|d_head|sqrt|缩放|"
+    r"mask|cache|低秩|alpha|下三角|block.?table|补全",
+    re.I,
+)
+
+
+def match_implementation_exercise(
+    *,
+    recent_text: str,
+    current_text: str,
+    used_ids: set[str] | None = None,
+) -> CodeExercise | None:
+    """Pick a bank exercise once talk has reached a sourced implementation."""
+
+    if not IMPLEMENTATION_DEPTH.search(current_text or ""):
+        return None
+    blob = _normalize(f"{recent_text}\n{current_text}")
+    used = used_ids or set()
+    hits: list[tuple[int, CodeExercise]] = []
+    for exercise in load_exercises():
+        if exercise.id in used:
+            continue
+        score = 0
+        for alias in STRONG_TOPIC_ALIASES.get(exercise.id, ()):
+            token = _normalize(alias)
+            if token and token in blob:
+                score += 10 + len(token)
+        if score:
+            hits.append((score, exercise))
+    if not hits:
+        return None
+    hits.sort(key=lambda item: (-item[0], item[1].id))
+    return hits[0][1]
 
 
 def match_exercise(

@@ -202,6 +202,33 @@ def test_second_stuck_after_rephrase_may_finish_a_direction() -> None:
     assert next_id == "d2"
 
 
+def _fake_library(n: int = 2):
+    hits = [
+        {
+            "id": f"iv-{index}",
+            "kind": "interview",
+            "company": "测试",
+            "role": "算法",
+            "source": "小红书",
+            "url": "https://example.com",
+            "snippet": f"RoPE 原问 {index}",
+        }
+        for index in range(n)
+    ]
+
+    class Result:
+        def for_model(self) -> str:
+            return f"命中 {n} 条"
+
+        def for_public(self) -> str:
+            return f"检索到 {n} 条相关面经" if n else "没有检索到与当前话题相关的面经"
+
+        def public_hits(self) -> list[dict[str, str]]:
+            return hits
+
+    return Result()
+
+
 def test_run_turn_overrides_model_skip_on_shallow_answer(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.agent.complete_json_with_tools",
@@ -209,6 +236,10 @@ def test_run_turn_overrides_model_skip_on_shallow_answer(monkeypatch) -> None:
             direction_done=True,
             next_question="预训练和 SFT 之间损失怎么接？",
         ),
+    )
+    monkeypatch.setattr(
+        "app.agent.run_search_library_from_tool_args",
+        lambda *_args, **_kwargs: _fake_library(2),
     )
     result, next_id, tools = run_turn(
         session=_session(),
@@ -222,8 +253,9 @@ def test_run_turn_overrides_model_skip_on_shallow_answer(monkeypatch) -> None:
     )
     assert result.direction_done is False
     assert next_id == "d1"
-    assert all(event["name"] == "search_library" for event in tools["events"])
-    assert all(item["name"] == "search_library" for item in tools["meta"])
+    search_events = [event for event in tools["events"] if event["name"] == "search_library"]
+    assert len(search_events) == 1
+    assert len(search_events[0]["hits"]) == 2
     assert "检索面经：" not in result.thought
     assert "条真实问法" not in result.thought
 
@@ -235,6 +267,10 @@ def test_run_turn_keeps_direction_after_first_complete_answer(monkeypatch) -> No
             direction_done=True,
             next_question="预训练和 SFT 之间损失怎么接？",
         ),
+    )
+    monkeypatch.setattr(
+        "app.agent.run_search_library_from_tool_args",
+        lambda *_args, **_kwargs: _fake_library(2),
     )
     result, next_id, tools = run_turn(
         session=_session(),
@@ -250,7 +286,7 @@ def test_run_turn_keeps_direction_after_first_complete_answer(monkeypatch) -> No
     assert result.direction_done is False
     assert next_id == "d1"
     assert "不要跳到别的方向" in result.next_question
-    assert all(event["name"] == "search_library" for event in tools["events"])
+    assert any(event["name"] == "search_library" for event in tools["events"])
 
 
 def test_run_turn_switches_after_enough_complete_answers(monkeypatch) -> None:
@@ -261,6 +297,10 @@ def test_run_turn_switches_after_enough_complete_answers(monkeypatch) -> None:
             next_question="预训练和 SFT 之间损失怎么接？",
         ),
     )
+    monkeypatch.setattr(
+        "app.agent.run_search_library_from_tool_args",
+        lambda *_args, **_kwargs: _fake_library(0),
+    )
     result, next_id, tools = run_turn(
         session=_session(),
         turns=_history("d1", COMPLETE_D1),
@@ -268,7 +308,9 @@ def test_run_turn_switches_after_enough_complete_answers(monkeypatch) -> None:
     )
     assert result.direction_done is True
     assert next_id == "d2"
-    assert all(event["name"] == "search_library" for event in tools["events"])
+    search_events = [event for event in tools["events"] if event["name"] == "search_library"]
+    assert search_events
+    assert search_events[0]["hits"] == []
 
 
 def test_apply_topic_lock_stays_when_goal_checkpoints_are_missing() -> None:
@@ -449,6 +491,109 @@ def test_turns_endpoint_emits_tool_start_before_thought(
     assert "查代码：是（search_library）" not in body
 
 
+def test_unknown_tool_is_not_recorded(monkeypatch) -> None:
+    from app.agent import resolve_tool_name
+
+    assert resolve_tool_name("thought") is None
+    assert resolve_tool_name("search_library") == "search_library"
+    assert resolve_tool_name("检索面经") == "search_library"
+
+    captured: dict[str, object] = {}
+
+    def fake_complete(system, user, tools, run_tool, max_tool_rounds=2, **_kwargs):
+        captured["reply"] = run_tool("thought", {})
+        return _model_turn(direction_done=False, next_question="RoPE 具体旋转的是哪一部分？")
+
+    monkeypatch.setattr("app.agent.complete_json_with_tools", fake_complete)
+    monkeypatch.setattr(
+        "app.agent.run_search_library_from_tool_args",
+        lambda *_args, **_kwargs: type(
+            "R",
+            (),
+            {
+                "for_model": lambda self: "命中",
+                "for_public": lambda self: "检索到 1 条面经",
+                "public_hits": lambda self: [
+                    {
+                        "id": "iv-1",
+                        "kind": "interview",
+                        "company": "测试",
+                        "role": "算法",
+                        "source": "小红书",
+                        "url": "https://example.com",
+                        "snippet": "RoPE 怎么外推？",
+                    }
+                ],
+            },
+        )(),
+    )
+    result, _next_id, tools = run_turn(
+        session=_session(),
+        turns=_history("d1", "用了 RoPE"),
+        answer="用了 RoPE 提升外推，旋转的是 Q 和 K。",
+    )
+    assert "只能使用" in str(captured["reply"])
+    assert all(event.get("name") != "thought" for event in tools["events"])
+    assert "未知 tool" not in result.thought
+
+
+def test_turns_endpoint_includes_search_hits(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(db, "DB_PATH", tmp_path / "app.db")
+    db.init_db()
+    _seed_session("session-sse-hits")
+    main_mod._write_requests.clear()
+    main_mod._active_turns.clear()
+
+    fake = TurnResult.model_validate(
+        _model_turn(direction_done=False, next_question="RoPE 具体旋转的是哪一部分？")
+    )
+    hits = [
+        {
+            "id": "iv-rope",
+            "kind": "interview",
+            "company": "月之暗面",
+            "role": "LLM 算法",
+            "source": "小红书",
+            "url": "https://example.com/x",
+            "snippet": "RoPE 外推怎么做？",
+        }
+    ]
+
+    def _fake_run_turn(**kwargs):
+        event = {
+            "name": "search_library",
+            "args": {"query": "RoPE"},
+            "result": "检索到 1 条面经",
+            "hits": hits,
+        }
+        on_progress = kwargs.get("on_progress")
+        if on_progress:
+            on_progress({"kind": "tool_start", "name": "search_library"})
+            on_progress({"kind": "tool", "event": event})
+        return fake, "d1", {"events": [event], "meta": [event]}
+
+    monkeypatch.setattr("app.main.run_turn", _fake_run_turn)
+
+    with TestClient(main_mod.app) as client:
+        response = client.post(
+            "/api/sessions/session-sse-hits/turns",
+            json={"answer": "用了 RoPE 提升外推"},
+        )
+        snapshot = client.get("/api/sessions/session-sse-hits")
+
+    assert response.status_code == 200
+    assert "RoPE 外推怎么做？" in response.text
+    assert snapshot.status_code == 200
+    payload = snapshot.json()
+    assert payload["pending"] is False
+    assert payload["session"]["id"] == "session-sse-hits"
+    user_turns = [item for item in payload["turns"] if item["role"] == "user"]
+    assert user_turns[-1]["body"] == "用了 RoPE 提升外推"
+
+
 def test_turn_result_allows_torch_compile_in_next_question() -> None:
     question = "那你跟 torch.compile 比，手写 Triton 的延迟你怎么权衡？"
     result = TurnResult.model_validate(
@@ -508,6 +653,81 @@ def test_turn_result_rejects_piled_or_double_next_question() -> None:
         except ValidationError:
             continue
         raise AssertionError(f"broad question must be rejected: {question}")
+
+
+def test_coerce_empty_or_compound_next_question_still_replies() -> None:
+    from app.agent import coerce_turn_payload, fallback_turn_result
+
+    direction = DIRECTIONS[0]
+    empty = TurnResult.model_validate(
+        coerce_turn_payload(
+            {
+                "thought": "评价：先接住这一答。\n查代码：否\n本方向结束：否，因为还在当前方向。",
+                "direction_done": False,
+                "next_question": "",
+            },
+            direction=direction,
+            answer="旋的是 Q 和 K。",
+        )
+    )
+    assert empty.next_question
+    assert "评价" in empty.thought
+    compound = TurnResult.model_validate(
+        coerce_turn_payload(
+            {
+                "thought": "评价：机制还虚。\n查代码：否",
+                "direction_done": False,
+                "next_question": "QKV 分别来自哪？缩放又为什么除根号 d_k？",
+            },
+            direction=direction,
+            answer="旋的是 Q 和 K。",
+        )
+    )
+    assert compound.next_question.count("？") + compound.next_question.count("?") <= 1
+    echo = TurnResult.model_validate(
+        coerce_turn_payload(
+            {
+                "thought": "评价：先接住。",
+                "direction_done": False,
+                "next_question": "下一问必须只问一个微步骤？分别讲清 Q 和 K？",
+            },
+            direction=direction,
+            answer="旋的是 Q 和 K。",
+        )
+    )
+    assert echo.next_question
+    assert "微步骤" not in echo.next_question
+    fallback = fallback_turn_result(direction, "用了 RoPE")
+    assert fallback.next_question
+    assert "评价" in fallback.thought
+
+
+def test_run_turn_falls_back_when_llm_never_returns_json(monkeypatch) -> None:
+    from app.llm import LLMError
+
+    def boom(*_args, **_kwargs):
+        raise LLMError("MiniMax returned an empty response")
+
+    monkeypatch.setattr("app.agent.complete_json_with_tools", boom)
+    monkeypatch.setattr(
+        "app.agent.run_search_library_from_tool_args",
+        lambda *_args, **_kwargs: _fake_library(0),
+    )
+    result, next_id, _tools = run_turn(
+        session=_session(),
+        turns=[
+            {
+                "role": "interviewer",
+                "body": "RoPE 具体旋转的是哪一部分？",
+                "direction_id": "d1",
+            }
+        ],
+        answer="请继续问吧",
+    )
+    assert next_id == "d1"
+    assert result.next_question
+    assert "评价" in result.thought
+    assert "本方向结束" in result.thought
 
 
 def test_ended_session_cannot_continue_turns(

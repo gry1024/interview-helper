@@ -176,8 +176,7 @@ def test_run_turn_opens_catalog_exercise_not_invented(monkeypatch) -> None:
     assert next_id == "d1"
     assert result.direction_done is False
     assert tools["events"]
-    event = tools["events"][0]
-    assert event["name"] == "code_exercise"
+    event = next(item for item in tools["events"] if item["name"] == "code_exercise")
     assert event["payload"]["exercise_id"] == "mha-forward"
     assert event["payload"]["language"] == "python"
     assert "Multi-Head" in event["payload"]["title"]
@@ -214,8 +213,7 @@ def test_run_turn_rejects_invented_exercise_id(monkeypatch) -> None:
         turns=[{"role": "interviewer", "body": "下一问", "direction_id": "d1"}],
         answer="我可以写两数之和。",
     )
-    event = tools["events"][0]
-    assert event["name"] == "code_exercise"
+    event = next(item for item in tools["events"] if item["name"] == "code_exercise")
     assert event.get("payload") is None
     assert "无法打开" in event["result"]
 
@@ -264,6 +262,50 @@ def test_looks_like_code_dump_and_forces_editor(monkeypatch) -> None:
     event = next(item for item in tools["events"] if item["name"] == "code_exercise")
     assert event["payload"]["exercise_id"] == "rope-apply"
     assert "已打开《" in event["result"]
+
+
+def test_run_turn_force_opens_rope_at_implementation_depth(monkeypatch) -> None:
+    completions = _FakeCompletions(
+        [_FakeResponse(_FakeMessage(content=json.dumps(_legal_turn_json())))]
+    )
+    _install_client(monkeypatch, completions)
+    result, next_id, tools = run_turn(
+        session=_session(),
+        turns=[
+            {
+                "role": "interviewer",
+                "body": "RoPE 具体旋转的是哪一部分？",
+                "direction_id": "d1",
+            }
+        ],
+        answer="旋的是 Q 和 K，把偶数维两两组成复数再乘 e^{iθ}。",
+    )
+    assert next_id == "d1"
+    assert result.next_question
+    event = next(item for item in tools["events"] if item["name"] == "code_exercise")
+    assert event["payload"]["exercise_id"] == "rope-apply"
+
+
+def test_run_turn_does_not_open_exercise_on_transformer_name_drop(monkeypatch) -> None:
+    completions = _FakeCompletions(
+        [_FakeResponse(_FakeMessage(content=json.dumps(_legal_turn_json())))]
+    )
+    _install_client(monkeypatch, completions)
+    _result, _next_id, tools = run_turn(
+        session=_session(),
+        turns=[
+            {
+                "role": "interviewer",
+                "body": "你项目用了什么结构？",
+                "direction_id": "d1",
+            }
+        ],
+        answer="用了 Transformer。",
+    )
+    assert not any(
+        item.get("name") == "code_exercise" and item.get("payload")
+        for item in tools["events"]
+    )
 
 
 def test_run_turn_submission_does_not_offer_exercise_tool(monkeypatch) -> None:

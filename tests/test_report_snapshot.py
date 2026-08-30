@@ -1,6 +1,7 @@
 """Pure-function tests for end-moment snapshot and read-only replay."""
 
 import json
+import re
 
 import pytest
 
@@ -179,11 +180,40 @@ def test_load_review_for_replay_does_not_call_generators(monkeypatch) -> None:
 
 def test_compose_report_text_keeps_verbatim_and_rejects_missing_section() -> None:
     report_text = _sample_report()
-    assert report.compose_report_text(report_text) is report_text
-    with pytest.raises(ValueError, match="岗位本质对照"):
+    assert report.compose_report_text(report_text) == report_text
+    with pytest.raises(ValueError, match="岗位匹配"):
         report.compose_report_text("## 总评\n整场主档：真不懂\n只有总评")
     with pytest.raises(ValueError, match="整场主档"):
         report.compose_report_text(
-            "## 总评\n没有主档\n\n## 岗位本质对照\n对照\n\n"
+            "## 总评\n没有主档\n\n## 岗位匹配\n对照\n\n"
             "## 知识建议\n建议\n\n## 项目改良\n改造"
         )
+
+
+def test_compose_report_accepts_legacy_job_essence_heading() -> None:
+    text = (
+        "## 总评\n\n整场主档：真懂\n依据。\n\n"
+        "## 岗位本质对照\n\n已经覆盖：训练闭环。口头能讲、仓库撑不住：无。"
+        "岗位在意但本项目没有：检索。\n\n"
+        "## 知识建议\n\n用项目对象补缺口。\n\n"
+        "## 项目改良\n\n几小时内做最小改造。"
+    )
+    assert "岗位本质对照" in report.compose_report_text(text)
+
+
+def test_salvage_closes_hanging_quote_in_job_match() -> None:
+    truncated = (
+        "## 总评\n\n整场主档：懂但讲不出\n依据来自本场原句。\n\n"
+        "## 岗位匹配\n\n"
+        "对照岗位本质（后训练全链路 / Attention 变体 / LoRA 边界 / 显存账 / "
+        "预训练基本盘 / 数据管线 / 代码能力下限）：项目已经覆盖：Tokenizer 与预训练。"
+        "口头能讲、仓库撑不住：显存账只报了数字。"
+        "岗位在意但本项目没有：“\n\n"
+        "## 知识建议\n\n用项目对象补缺口。\n\n"
+        "## 项目改良\n\n几小时内做最小改造。"
+    )
+    closed = report.compose_report_text(truncated)
+    assert not closed.rstrip().endswith(("“", '"', "「", "『"))
+    third = closed.split("岗位在意但本项目没有")[-1].split("## 知识建议")[0]
+    assert len(re.sub(r"[：:「“\"\s]", "", third)) >= 4
+    assert "岗位匹配" in closed

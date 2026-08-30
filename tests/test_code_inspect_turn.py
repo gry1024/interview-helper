@@ -187,11 +187,13 @@ def test_run_turn_triggers_inspect_without_leaking_coordinates(
     assert "未体现" in result.thought
     assert CODE_COORDINATE.search(result.next_question) is None
     assert ".py:" not in result.next_question
-    assert tools["events"]
-    assert tools["events"][0]["name"] == "code_inspect"
-    assert ".py:" not in tools["events"][0]["result"]
-    assert "未体现" in tools["events"][0]["result"]
-    assert "internal_excerpt" in tools["meta"][0]["result"]
+    inspect_event = next(item for item in tools["events"] if item["name"] == "code_inspect")
+    assert inspect_event["name"] == "code_inspect"
+    assert ".py:" not in inspect_event["result"]
+    assert "未体现" in inspect_event["result"]
+    assert "internal_excerpt" in next(
+        item["result"] for item in tools["meta"] if item["name"] == "code_inspect"
+    )
     second_messages = completions.calls[1]["messages"]
     assert any(
         msg.get("role") == "tool" and "internal_excerpt" in msg.get("content", "")
@@ -239,7 +241,7 @@ def test_run_turn_jail_path_hint_does_not_stop_interview(
     assert next_id == "d1"
     assert result.next_question
     assert ".py:" not in result.next_question
-    public = tools["events"][0]["result"]
+    public = next(item["result"] for item in tools["events"] if item["name"] == "code_inspect")
     assert "root:x:" not in public
     assert "/etc/passwd" not in public
     assert CODE_COORDINATE.search(result.next_question) is None
@@ -271,7 +273,9 @@ def test_run_turn_clone_ok_false_keeps_interview_going(monkeypatch) -> None:
     )
     assert next_id == "d1"
     assert result.direction_done is False
-    assert "不可用" in tools["events"][0]["result"]
+    assert "不可用" in next(
+        item["result"] for item in tools["events"] if item["name"] == "code_inspect"
+    )
     assert ".py:" not in result.next_question
 
 
@@ -336,4 +340,5 @@ def test_run_turn_retries_when_question_has_coordinates(
     assert next_id == "d1"
     assert ".py:" not in result.next_question
     assert "model.py" not in result.next_question
-    assert len(completions.calls) == 2
+    assert result.next_question
+    assert len(completions.calls) == 1

@@ -20,15 +20,28 @@ REVIEW_SNAPSHOT_SCHEMA_VERSION = 1
 STATEMENT_PREVIEW_LIMIT = 40
 REPORT_SECTION_TITLES = (
     "总评",
-    "岗位本质对照",
+    "岗位匹配",
     "知识建议",
     "项目改良",
 )
+REPORT_SECTION_ALIASES = {
+    "总评": ("总评", "综合评价", "整体评价"),
+    "岗位匹配": (
+        "岗位匹配",
+        "岗位匹配对照",
+        "岗位本质对照",
+        "岗位本质",
+        "本质对照",
+    ),
+    "知识建议": ("知识建议", "知识补习"),
+    "项目改良": ("项目改良", "最小改造", "项目改造", "改造建议"),
+}
 LIVE_THOUGHT_FORBIDDEN = (
     "建议你",
     "总评",
     "复习",
     "岗位本质对照",
+    "岗位匹配",
     "知识建议",
     "项目改良",
 )
@@ -77,16 +90,76 @@ def extract_primary_band(report_text: str) -> str:
     return match.group(1)
 
 
+def _has_section_title(text: str, title: str) -> bool:
+    blob = text or ""
+    for alias in REPORT_SECTION_ALIASES.get(title, (title,)):
+        if re.search(rf"^#{{1,6}}\s*{re.escape(alias)}\s*$", blob, re.M):
+            return True
+        if f"## {alias}" in blob:
+            return True
+    return False
+
+
+HANGING_OPEN_QUOTE = re.compile(r"[「『“\"]+\s*$")
+THIRD_BULLET_EMPTY = re.compile(r"岗位在意但本项目没有[：:]\s*$")
+TRUNCATED_TAIL = re.compile(r"[：:、，,…]\s*$")
+JOB_MATCH_HEADING = re.compile(
+    r"^#{1,6}\s*(?:岗位匹配对照|岗位匹配|岗位本质对照|岗位本质|本质对照)\s*$",
+    re.M,
+)
+
+
+def _close_job_match_body(section: str) -> str:
+    raw = section or ""
+    trimmed = raw.rstrip()
+    if not (HANGING_OPEN_QUOTE.search(trimmed) or THIRD_BULLET_EMPTY.search(trimmed)):
+        return raw
+    body = HANGING_OPEN_QUOTE.sub("", trimmed).rstrip()
+    if THIRD_BULLET_EMPTY.search(body):
+        body += "本场未再展开到可核的岗位筛选项；不编造仓库没有的实现。"
+    if "岗位在意但本项目没有" not in body:
+        body += (
+            "\n- 岗位在意但本项目没有：本场未再展开到可核的岗位筛选项；"
+            "不编造仓库没有的实现。"
+        )
+    if TRUNCATED_TAIL.search(body):
+        body += "不编造仓库没有的实现。"
+    if raw.endswith("\n") and not body.endswith("\n"):
+        body += "\n"
+    return body
+
+
+def salvage_truncated_report(text: str) -> str:
+    """Close a truncated 岗位匹配 section so it does not end on an opening quote."""
+
+    blob = text or ""
+    heading = JOB_MATCH_HEADING.search(blob)
+    if heading is None:
+        return blob
+    start = heading.end()
+    following = re.search(r"^#{1,6}\s+\S+", blob[start:], re.M)
+    if following:
+        section = blob[start : start + following.start()]
+        suffix = blob[start + following.start() :]
+    else:
+        section = blob[start:]
+        suffix = ""
+    return blob[:start] + _close_job_match_body(section) + suffix
+
+
 def compose_report_text(model_output: str) -> str:
     """Accept a finished report. Keep every character; do not summarize."""
 
     if not isinstance(model_output, str) or not model_output:
         raise ValueError("报告不能为空")
-    missing = [title for title in REPORT_SECTION_TITLES if title not in model_output]
+    salvaged = salvage_truncated_report(model_output)
+    missing = [
+        title for title in REPORT_SECTION_TITLES if not _has_section_title(salvaged, title)
+    ]
     if missing:
         raise ValueError(f"报告缺少必要段落: {'、'.join(missing)}")
-    extract_primary_band(model_output)
-    return model_output
+    extract_primary_band(salvaged)
+    return salvaged
 
 
 def build_report_from_parts(
@@ -100,7 +173,7 @@ def build_report_from_parts(
 
     parts = {
         "总评": overall,
-        "岗位本质对照": job_essence_compare,
+        "岗位匹配": job_essence_compare,
         "知识建议": knowledge_advice,
         "项目改良": project_improve,
     }

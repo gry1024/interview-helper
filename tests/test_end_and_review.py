@@ -142,7 +142,7 @@ def test_end_endpoint_streams_report_then_forbids_turns(
         assert "event: done" in body
         assert "event: error" not in body
         assert "总评" in body
-        assert "岗位本质对照" in body
+        assert "岗位匹配" in body
         assert public in body
 
         blocked = client.post(

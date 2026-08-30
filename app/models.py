@@ -170,7 +170,7 @@ class TurnResult(BaseModel):
             raise ValueError("思考必须说明是否查代码")
         if "本方向结束" not in self.thought:
             raise ValueError("思考必须说明本方向是否结束")
-        forbidden = ("建议你", "总评", "复习", "岗位本质对照")
+        forbidden = ("建议你", "总评", "复习", "岗位本质对照", "岗位匹配")
         if any(token in self.thought for token in forbidden):
             raise ValueError("思考不能包含建议或总评")
         return self

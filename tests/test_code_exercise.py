@@ -14,6 +14,7 @@ from app.tools.code_exercise import (
     get_exercise,
     load_exercises,
     match_exercise,
+    match_implementation_exercise,
     resolve_exercise,
     used_exercise_ids,
 )
@@ -120,3 +121,25 @@ def test_used_exercise_ids_from_turn_meta() -> None:
 def test_get_exercise_returns_none_for_unknown() -> None:
     assert get_exercise("mha-forward") is not None
     assert get_exercise("not-in-bank") is None
+
+
+def test_match_implementation_opens_rope_not_transformer_name_drop() -> None:
+    rope = match_implementation_exercise(
+        recent_text="RoPE 具体旋转的是哪一部分？",
+        current_text="旋的是 Q 和 K，把偶数维两两组成复数再乘旋转矩阵。",
+        used_ids=set(),
+    )
+    assert rope is not None
+    assert rope.id == "rope-apply"
+    named = match_implementation_exercise(
+        recent_text="你项目用了什么结构？",
+        current_text="用了 Transformer。",
+        used_ids=set(),
+    )
+    assert named is None
+    skipped = match_implementation_exercise(
+        recent_text="RoPE 具体旋转的是哪一部分？",
+        current_text="请继续问吧",
+        used_ids=set(),
+    )
+    assert skipped is None

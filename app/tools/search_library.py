@@ -17,9 +17,13 @@ from typing import Any, Mapping
 
 
 JD_DIR = Path(__file__).resolve().parent.parent / "jd"
-MAX_HITS = 5
+MAX_HITS = 10
+MIN_HIT_SCORE = 8.0
 SNIPPET_CHARS = 220
 ERROR_EMPTY_QUERY = "检索词为空。"
+PROCESS_QUERY = re.compile(
+    r"(请)?(继续问|继续吧|往下问|下一问|换个?(话题|方向|问题)|换话题|好的|嗯嗯?|然后呢)"
+)
 
 LATIN_TOKEN = re.compile(r"[a-z0-9#+]+", re.I)
 CJK_CHAR = re.compile(r"[\u4e00-\u9fff]")
@@ -35,9 +39,10 @@ SEARCH_LIBRARY_TOOL: dict[str, object] = {
     "function": {
         "name": "search_library",
         "description": (
-            "检索已采集的 JD/面经库，优先返回面经里的真实原问。"
-            "出下一问前应先检索当前微步骤相关词（如 RoPE、LoRA 秩、KV cache），"
-            "尽量改写库中原问，少自己编。不要一次抛一串题。"
+            "按当前话题检索 JD/面经库，用相关原问改写下一问。"
+            "query 必须是当前技术话题（RoPE、LoRA 秩、KV cache），"
+            "不要用「请继续问吧 / 换个话题 / 好的」当检索词。"
+            "相关就返回，条数不固定；没有相关原问就空着，不要凑条数。"
         ),
         "parameters": {
             "type": "object",
@@ -107,8 +112,22 @@ class LibrarySearchResult:
         if self.error:
             return "面经检索暂不可用。"
         if not self.hits:
-            return "没有检索到相关面经"
-        return f"检索到 {len(self.hits)} 条面经"
+            return "没有检索到与当前话题相关的面经"
+        return f"检索到 {len(self.hits)} 条相关面经"
+
+    def public_hits(self) -> list[dict[str, str]]:
+        return [
+            {
+                "id": hit.sample_id,
+                "kind": hit.kind,
+                "company": hit.company,
+                "role": hit.role,
+                "source": hit.source_name,
+                "url": hit.source_url,
+                "snippet": hit.snippet,
+            }
+            for hit in self.hits
+        ]
 
 
 def _tokenize(text: str) -> list[str]:
@@ -222,6 +241,15 @@ def _score_chunk(
     return score
 
 
+def is_unsearchable_query(query: str) -> bool:
+    """True for process talk that must not hit the interview corpus."""
+
+    compact = re.sub(r"\s+", "", query or "")
+    if len(compact) < 4:
+        return True
+    return bool(PROCESS_QUERY.search(compact))
+
+
 def search_library(
     query: str,
     *,
@@ -231,6 +259,8 @@ def search_library(
     cleaned = (query or "").strip()
     if not cleaned:
         return LibrarySearchResult(ok=False, query="", hits=[], error=ERROR_EMPTY_QUERY)
+    if is_unsearchable_query(cleaned):
+        return LibrarySearchResult(ok=True, query=cleaned, hits=[])
 
     chunks, df = _load_index(_index_cache_key())
     wanted = (kind or "interview").strip().lower()
@@ -264,7 +294,28 @@ def search_library(
             )
         )
     scored.sort(key=lambda item: item.score, reverse=True)
-    return LibrarySearchResult(ok=True, query=cleaned, hits=scored[: max(1, limit)])
+    strong = [hit for hit in scored if hit.score >= MIN_HIT_SCORE][: max(0, limit)]
+    return LibrarySearchResult(ok=True, query=cleaned, hits=strong)
+
+
+def topic_search_query(
+    *,
+    direction_title: str,
+    last_question: str,
+    answer: str,
+) -> str:
+    """Build a topic query. Process talk like「请继续问吧」is not used as the query."""
+
+    parts: list[str] = []
+    cleaned_answer = re.sub(r"\s+", " ", (answer or "").strip())
+    if cleaned_answer and not is_unsearchable_query(cleaned_answer):
+        parts.append(cleaned_answer[:80])
+    cleaned_question = re.sub(r"\s+", " ", (last_question or "").strip())
+    if cleaned_question:
+        parts.append(cleaned_question[:80])
+    elif (direction_title or "").strip():
+        parts.append(direction_title.strip()[:40])
+    return " ".join(part for part in parts if part).strip()[:120]
 
 
 def run_search_library_from_tool_args(
@@ -279,10 +330,3 @@ def run_search_library_from_tool_args(
     )
 
 
-def default_search_query(*, direction_title: str, direction_goal: str, answer: str) -> str:
-    goal_head = re.split(r"[：:，,。]", direction_goal or "", maxsplit=1)[0][:24]
-    parts = [direction_title or "", goal_head]
-    answer_terms = LATIN_TOKEN.findall((answer or "").lower())
-    parts.extend(answer_terms[:6])
-    merged = " ".join(part for part in parts if part).strip()
-    return merged[:80] or "大模型 实习 面经"

@@ -116,10 +116,10 @@ def build_interviewer_agent_payload(role: str | None = None) -> dict[str, Any]:
             "text": "开场 d1 必须是项目总览，第一问禁止跳进公式。",
         },
         {
-            "id": "search_library_before_question",
+            "id": "search_library_on_topic",
             "value": True,
             "source": "app/prompts/interviewer.md 与 app/agent.py:run_turn",
-            "text": "出下一问前必须检索面经库；只改写原问，不对学生念条目编号。",
+            "text": "每轮按当前话题检索面经，条数不固定，没有相关命中就空着。过程句不当检索词。只改写原问。",
         },
         {
             "id": "no_code_coordinates",
@@ -154,7 +154,7 @@ def build_interviewer_agent_payload(role: str | None = None) -> dict[str, Any]:
             "name": "按需工具",
             "source": "app/prompts/interviewer.md 与 app/tools/",
             "text": (
-                "search_library：出下一问前检索，只返回库中原问。"
+                "search_library：每轮按当前话题检索，相关才返回，条数不固定。"
                 "code_inspect：核仓库真伪，不把坐标念给学生。"
                 "code_exercise：面经常考实现才打开题库，禁止现场编题。"
             ),
@@ -182,7 +182,7 @@ def build_interviewer_agent_payload(role: str | None = None) -> dict[str, Any]:
         "skills": skills,
         "runtime_rules": runtime_rules,
         "when_to_call": {
-            "search_library": "每轮出下一问前；query 写当前微步骤；默认 kind=interview。",
+            "search_library": "每轮按当前话题检索；相关 0～10 条；过程句不当检索词。",
             "code_inspect": "学生吹了仓库可能对不上的能力，或需要核对真伪/决定同方向怎么引。",
             "code_exercise": "当前话题属于面经常考实现，且要核实会不会写；题只从题库取。",
         },

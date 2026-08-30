@@ -31,6 +31,54 @@ def test_public_hint_has_no_raw_dump() -> None:
     result = search_library("KV cache", kind="interview")
     public = result.for_public()
     assert "检索到" in public
-    assert "条面经" in public
+    assert "相关面经" in public
     assert "http" not in public
     assert "项目总览" not in public
+    hits = result.public_hits()
+    assert hits
+    assert hits[0]["snippet"]
+    assert hits[0]["id"]
+
+
+def test_topic_query_uses_last_question_not_process_talk() -> None:
+    from app.tools.search_library import topic_search_query
+
+    query = topic_search_query(
+        direction_title="项目总览",
+        last_question="RoPE 具体旋转的是哪一部分？",
+        answer="请继续问吧",
+    )
+    assert "RoPE" in query
+    assert "继续问" not in query
+
+
+def test_search_hit_count_is_not_padded_to_five() -> None:
+    rope = search_library("RoPE 外推", kind="interview")
+    kv = search_library("KV cache", kind="interview")
+    assert 1 <= len(rope.hits) <= 10
+    assert 1 <= len(kv.hits) <= 10
+    weak = search_library("token ID hidden state", kind="interview")
+    assert weak.ok
+    assert len(weak.hits) <= 10
+
+
+def test_process_talk_does_not_return_padded_hits() -> None:
+    from app.tools.search_library import is_unsearchable_query
+
+    assert is_unsearchable_query("请继续问吧")
+    assert is_unsearchable_query("换个话题吧")
+    assert not is_unsearchable_query("RoPE 外推怎么做")
+    for query in ("请继续问吧", "换个话题吧", "好的"):
+        result = search_library(query, kind="interview")
+        assert result.ok
+        assert result.hits == []
+        assert "没有检索到" in result.for_public()
+
+
+def test_find_library_sample_returns_full_note() -> None:
+    from app.main import find_library_sample
+
+    sample = find_library_sample("bytedance-llm-algorithm-intern-interview")
+    assert sample is not None
+    assert sample["id"] == "bytedance-llm-algorithm-intern-interview"
+    assert sample.get("text")

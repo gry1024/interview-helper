@@ -34,7 +34,13 @@ const ROLE_LABELS = {
   agent: "Agent 应用实习",
   rag: "RAG / AI 搜索实习",
 };
-const DEMO_CATALOG_URL = "/demo-projects.json?v=21";
+const DEMO_CATALOG_URL = "/demo-projects.json?v=25";
+const KNOWN_TOOL_NAMES = new Set([
+  "search_library",
+  "code_inspect",
+  "code_exercise",
+  "thinking",
+]);
 let demoCatalog = [];
 let demoCatalogPromise = null;
 const LIBRARY_PAGE_SIZE = 9;
@@ -43,6 +49,8 @@ let libraryRequestSeq = 0;
 let libraryKind = "jd";
 let libraryPage = 1;
 let turnInFlight = false;
+let sseReaderAlive = false;
+let currentThoughtNode = null;
 let endingInFlight = false;
 let monacoLoadPromise = null;
 let monacoEditor = null;
@@ -62,8 +70,8 @@ const REPORT_SECTIONS = [
   { key: "overview", label: "总评", aliases: ["总评", "综合评价", "整体评价"] },
   {
     key: "essence",
-    label: "岗位本质",
-    aliases: ["岗位本质对照", "岗位本质", "本质对照"],
+    label: "岗位匹配",
+    aliases: ["岗位匹配", "岗位匹配对照", "岗位本质对照", "岗位本质", "本质对照"],
   },
   { key: "knowledge", label: "知识建议", aliases: ["知识建议", "知识补习"] },
   {
@@ -693,7 +701,7 @@ function thoughtTimelineEl(panel) {
 }
 
 function upsertToolStep(panel, name, payload) {
-  if (!panel) {
+  if (!panel || !KNOWN_TOOL_NAMES.has(name)) {
     return;
   }
   panel.hidden = false;
@@ -722,6 +730,94 @@ function upsertToolStep(panel, name, payload) {
   const result = payload?.result || "";
   const status = payload?.status || payload?.label || ui.start;
   body.textContent = result || status;
+  if (Array.isArray(payload?.hits) && payload.hits.length) {
+    attachToolHits(row, payload.hits, result || `检索到 ${payload.hits.length} 条相关面经`);
+  }
+}
+
+function attachToolHits(row, hits, summary) {
+  row.classList.add("is-expandable");
+  const body = row.querySelector(".tool-step-body");
+  if (body) {
+    body.textContent = summary || `检索到 ${hits.length} 条相关面经 · 点击查看`;
+  }
+  let list = row.querySelector(".tool-hits");
+  if (!list) {
+    list = document.createElement("div");
+    list.className = "tool-hits";
+    list.hidden = true;
+    row.append(list);
+    row.setAttribute("role", "button");
+    row.tabIndex = 0;
+    row.setAttribute("aria-expanded", "false");
+    const toggle = (event) => {
+      if (event.target.closest(".tool-hit")) {
+        return;
+      }
+      event.preventDefault();
+      const open = list.hidden;
+      list.hidden = !open;
+      row.classList.toggle("is-open", open);
+      row.setAttribute("aria-expanded", String(open));
+    };
+    row.addEventListener("click", toggle);
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        toggle(event);
+      }
+    });
+  }
+  list.replaceChildren(
+    ...hits.map((hit) => {
+      const item = document.createElement("button");
+      item.type = "button";
+      item.className = "tool-hit";
+      item.append(
+        createTextElement(
+          "span",
+          "tool-hit-meta",
+          [hit.company, hit.role || (hit.kind === "jd" ? "岗位" : "面经")]
+            .filter(Boolean)
+            .join(" · "),
+        ),
+        createTextElement("span", "tool-hit-snippet", hit.snippet || ""),
+      );
+      item.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        void openHitDetail(hit);
+      });
+      return item;
+    }),
+  );
+}
+
+async function openHitDetail(hit) {
+  if (hit?.id) {
+    try {
+      const response = await fetch(`/api/jds/${encodeURIComponent(hit.id)}`, {
+        headers: { Accept: "application/json" },
+      });
+      if (response.ok) {
+        const sample = await response.json();
+        openSampleDetail(sample, sample.kind === "jd" ? "jd" : "interview");
+        return;
+      }
+    } catch (error) {
+      console.error("Failed to open retrieved sample", error);
+    }
+  }
+  openSampleDetail(
+    {
+      company: hit.company || "",
+      role: hit.role || "",
+      source_name: hit.source || "",
+      source_url: hit.url || "",
+      text: hit.snippet || "",
+      experience: hit.snippet || "",
+    },
+    hit.kind === "jd" ? "jd" : "interview",
+  );
 }
 
 function sanitizeThought(text) {
@@ -729,13 +825,16 @@ function sanitizeThought(text) {
     .split("\n")
     .filter((line) => {
       const trimmed = line.trim();
-      if (/(建议你|总评|复习|岗位本质对照|知识建议|项目改良)/.test(line)) {
+      if (/(建议你|总评|复习|岗位本质对照|岗位匹配|知识建议|项目改良)/.test(line)) {
         return false;
       }
       if (/^检索面经[：:]/.test(trimmed)) {
         return false;
       }
       if (/^查代码：是（search_library）/.test(trimmed)) {
+        return false;
+      }
+      if (/未知\s*tool|只能使用 search_library/.test(trimmed)) {
         return false;
       }
       return true;
@@ -870,10 +969,13 @@ function asExercisePayload(value) {
     value.prompt || value.description || value.question,
   ).trim();
   const starter = fieldText(
-    value.starter || value.starter_code || value.code || "",
+    value.starter || value.starter_code || "",
   );
   const exerciseId = fieldText(value.exercise_id || value.id || "").trim();
-  if (!title && !prompt && !starter && !exerciseId) {
+  if (!starter) {
+    return null;
+  }
+  if (!title && !prompt && !exerciseId) {
     return null;
   }
   return {
@@ -904,9 +1006,7 @@ function extractCodeExercise(eventName, data) {
     }
   };
   return (
-    asExercisePayload(data) ||
-    asExercisePayload(data.args) ||
-    asExercisePayload(data.input) ||
+    asExercisePayload(data.payload) ||
     asExercisePayload(typeof data.result === "object" ? data.result : null) ||
     fromResultString()
   );
@@ -1231,12 +1331,16 @@ async function consumeCodeSubmissionResponse(response, thoughtNode) {
         data.direction_id || interviewLive.dataset.currentDirectionId,
       );
     }
-    return;
+    return {
+      question: nextQuestion || "",
+      directionId: data.direction_id || interviewLive.dataset.currentDirectionId,
+    };
   }
   const turn = await consumeTurnStream(response, thoughtNode);
   if (turn.question) {
     appendInterviewerBubble(turn.question, turn.directionId);
   }
+  return turn;
 }
 
 async function submitCodeExercise() {
@@ -1278,6 +1382,7 @@ async function submitCodeExercise() {
       "代码已收到。可以说一下你为什么先减最大值再做归一化吗？",
       interviewLive.dataset.currentDirectionId || "d1",
     );
+    closeCodeExercise({ dispose: true });
     codeSubmitting = false;
     setTurnLoading(false);
     answerInput?.focus();
@@ -1322,8 +1427,31 @@ async function submitCodeExercise() {
     }
 
     const thoughtNode = appendCodeSubmissionBubble(code, { fallback });
-    markCodeSubmitted(fallback);
-    await consumeCodeSubmissionResponse(response, thoughtNode);
+    currentThoughtNode = thoughtNode;
+    if (interviewLive) {
+      interviewLive.dataset.pendingAnswer = code;
+    }
+    let turn;
+    try {
+      turn = await consumeCodeSubmissionResponse(response, thoughtNode);
+    } catch (streamError) {
+      const recovered = await recoverCompletedTurn(sessionId, thoughtNode, code);
+      if (!recovered?.question) {
+        throw streamError;
+      }
+      turn = recovered;
+    }
+    if (!turn?.question) {
+      const recovered = await recoverCompletedTurn(sessionId, thoughtNode, code);
+      if (!recovered?.question) {
+        throw new Error("未收到下一问，请稍后重试。");
+      }
+    }
+    closeCodeExercise({ dispose: true });
+    if (interviewLive) {
+      delete interviewLive.dataset.pendingAnswer;
+    }
+    currentThoughtNode = null;
     codeSubmitting = false;
     setTurnLoading(false);
     answerInput?.focus();
@@ -1444,13 +1572,15 @@ function renderStartedSession(session) {
 }
 
 function applySseEvent(eventName, data, thoughtNode, state) {
-  const exercise = extractCodeExercise(eventName, data);
-  if (eventName === "code_exercise" || fieldText(data?.name).trim() === "code_exercise") {
-    if (exercise) {
+  const toolName = fieldText(data?.name).trim();
+  const isExerciseEvent =
+    eventName === "code_exercise" ||
+    (eventName === "tool" && toolName === "code_exercise");
+  if (isExerciseEvent) {
+    const exercise = extractCodeExercise(eventName, data);
+    if (exercise && exercise.starter) {
       state.receivedExercise = true;
       void openCodeExercise(exercise);
-    } else if (isCodeExerciseOpen()) {
-      state.receivedExercise = true;
     }
     if (eventName === "tool") {
       upsertToolStep(thoughtNode, "code_exercise", {
@@ -1461,6 +1591,9 @@ function applySseEvent(eventName, data, thoughtNode, state) {
   }
   if (eventName === "tool_start") {
     const name = data.name || "search_library";
+    if (!KNOWN_TOOL_NAMES.has(name) || name === "thinking") {
+      return;
+    }
     upsertToolStep(thoughtNode, name, {
       status: data.label || TOOL_UI[name]?.start || `正在调用 ${name} 工具`,
     });
@@ -1476,8 +1609,12 @@ function applySseEvent(eventName, data, thoughtNode, state) {
   }
   if (eventName === "tool") {
     const toolName = data.name || "code_inspect";
+    if (!KNOWN_TOOL_NAMES.has(toolName) || toolName === "thinking") {
+      return;
+    }
     upsertToolStep(thoughtNode, toolName, {
       result: sanitizeThought(data.result || ""),
+      hits: data.hits,
     });
     chatLog.scrollTop = chatLog.scrollHeight;
     return;
@@ -1511,10 +1648,68 @@ function parseSseBlock(block, onEvent) {
   onEvent(eventName, data);
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function lastChatInterviewerText() {
+  const rows = chatLog?.querySelectorAll(".bubble-row.interviewer");
+  if (!rows?.length) {
+    return "";
+  }
+  return rows[rows.length - 1].querySelector(".bubble")?.textContent || "";
+}
+
+async function recoverCompletedTurn(sessionId, thoughtNode, answer) {
+  const deadline = Date.now() + 120000;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+        headers: { Accept: "application/json" },
+      });
+      if (response.ok) {
+        const snapshot = await response.json();
+        const turns = snapshot.turns || [];
+        let userIndex = -1;
+        for (let index = turns.length - 1; index >= 0; index -= 1) {
+          if (turns[index].role === "user" && (turns[index].body || "") === answer) {
+            userIndex = index;
+            break;
+          }
+        }
+        if (userIndex >= 0) {
+          const thought = turns[userIndex + 1];
+          const question = turns[userIndex + 2];
+          if (thought?.role === "thought" && thoughtNode) {
+            fillThoughtFromTurn(thoughtNode, thought.body || "", thought.meta);
+          }
+          if (question?.role === "interviewer" && question.body) {
+            if (lastChatInterviewerText() !== question.body) {
+              appendInterviewerBubble(question.body, question.direction_id);
+            }
+            return {
+              question: question.body,
+              directionId: question.direction_id,
+            };
+          }
+        }
+        if (!snapshot.pending && userIndex < 0) {
+          break;
+        }
+      }
+    } catch (error) {
+      console.error("Recover turn failed", error);
+    }
+    await sleep(1200);
+  }
+  return null;
+}
+
 async function consumeSse(response, onEvent) {
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = "";
+  sseReaderAlive = true;
 
   const consumeBuffer = (raw, flushRemainder) => {
     const chunks = raw.split("\n\n");
@@ -1527,15 +1722,19 @@ async function consumeSse(response, onEvent) {
     return remainder;
   };
 
-  while (true) {
-    const { value, done } = await reader.read();
-    if (done) {
-      buffer += decoder.decode();
-      consumeBuffer(buffer, true);
-      break;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) {
+        buffer += decoder.decode();
+        consumeBuffer(buffer, true);
+        break;
+      }
+      buffer += decoder.decode(value, { stream: true });
+      buffer = consumeBuffer(buffer, false);
     }
-    buffer += decoder.decode(value, { stream: true });
-    buffer = consumeBuffer(buffer, false);
+  } finally {
+    sseReaderAlive = false;
   }
 }
 
@@ -1568,6 +1767,10 @@ async function submitTurn(event) {
   }
 
   const thoughtNode = appendUserBlock(answer);
+  currentThoughtNode = thoughtNode;
+  if (interviewLive) {
+    interviewLive.dataset.pendingAnswer = answer;
+  }
   thoughtNode.hidden = false;
   upsertToolStep(thoughtNode, "thinking", {
     status: "正在组织这一轮评价",
@@ -1606,16 +1809,32 @@ async function submitTurn(event) {
     }
 
     const turn = await consumeTurnStream(response, thoughtNode);
-    if (!turn.question && !turn.receivedExercise && !isCodeExerciseOpen()) {
-      throw new Error("未收到下一问，请稍后重试。");
-    }
     if (turn.question) {
       appendInterviewerBubble(turn.question, turn.directionId);
+    } else {
+      const recovered = await recoverCompletedTurn(sessionId, thoughtNode, answer);
+      if (!recovered) {
+        throw new Error("未收到下一问，请稍后重试。");
+      }
     }
+    if (interviewLive) {
+      delete interviewLive.dataset.pendingAnswer;
+    }
+    currentThoughtNode = null;
     setTurnLoading(false);
     answerInput.focus();
   } catch (error) {
     console.error("Failed to submit interview turn", error);
+    const recovered = await recoverCompletedTurn(sessionId, thoughtNode, answer);
+    if (recovered) {
+      if (interviewLive) {
+        delete interviewLive.dataset.pendingAnswer;
+      }
+      currentThoughtNode = null;
+      setTurnLoading(false);
+      answerInput?.focus();
+      return;
+    }
     turnStatus.replaceChildren(
       createTextElement(
         "p",
@@ -1849,13 +2068,15 @@ function fillThoughtFromTurn(thoughtNode, body, meta) {
     seen.add(name);
     let result = "";
     if (name === "search_library") {
-      result = "已检索面经";
+      result = Array.isArray(item.hits) && item.hits.length
+        ? `检索到 ${item.hits.length} 条面经 · 点击查看`
+        : "已检索面经";
     } else if (name === "code_exercise") {
       result = String(item.result || "已打开手撕题");
     } else if (name === "code_inspect") {
       result = "已核对仓库";
     }
-    upsertToolStep(thoughtNode, name, { result });
+    upsertToolStep(thoughtNode, name, { result, hits: item.hits });
   }
   thoughtTextEl(thoughtNode).textContent = sanitizeThought(body || "");
 }
@@ -2372,6 +2593,9 @@ function activateTab(nextTab) {
   if (panelName === "interviewer") {
     loadInterviewerAgent();
   }
+  if (panelName === "interview") {
+    void maybeRecoverHiddenTurn();
+  }
 }
 
 tabs.forEach((tab, index) => {
@@ -2451,6 +2675,34 @@ document.querySelectorAll(".kind-btn").forEach((button) => {
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && document.querySelector("#library-modal")) {
     closeLibraryModal();
+  }
+});
+
+async function maybeRecoverHiddenTurn() {
+  if (!turnInFlight || sseReaderAlive) {
+    return;
+  }
+  const sessionId = interviewLive?.dataset.sessionId;
+  const answer = interviewLive?.dataset.pendingAnswer;
+  if (!sessionId || !answer) {
+    return;
+  }
+  const recovered = await recoverCompletedTurn(
+    sessionId,
+    currentThoughtNode,
+    answer,
+  );
+  if (recovered) {
+    delete interviewLive.dataset.pendingAnswer;
+    currentThoughtNode = null;
+    setTurnLoading(false);
+    answerInput?.focus();
+  }
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) {
+    void maybeRecoverHiddenTurn();
   }
 });
 

@@ -552,6 +552,53 @@ textarea.input {
   color: var(--fg-secondary);
 }
 
+.tool-step.is-expandable {
+  cursor: pointer;
+  flex-wrap: wrap;
+}
+
+.tool-step.is-expandable .tool-step-body {
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+}
+
+.tool-hits {
+  display: grid;
+  gap: 8px;
+  margin: 4px 0 0 60px;
+  width: 100%;
+}
+
+.tool-hit {
+  background: var(--bg-elevated);
+  border: 1px solid var(--divider);
+  border-radius: var(--radius-sm);
+  color: var(--fg);
+  cursor: pointer;
+  display: grid;
+  font: inherit;
+  gap: 4px;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.tool-hit:hover {
+  border-color: var(--fg-secondary);
+}
+
+.tool-hit-meta {
+  color: var(--fg-secondary);
+  font-size: 12px;
+}
+
+.tool-hit-snippet {
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
 .chat-composer {
   display: grid;
   gap: 12px;

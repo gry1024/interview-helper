@@ -5,11 +5,12 @@
 
 ## 何时调用
 
-- 当前方向已经问到机制，需要看学生能否写出对应前向（如 Attention → Multi-Head / scaled；LLaMA 组件 → RoPE / RMSNorm / SwiGLU；推理 → KV Cache / PagedAttention；微调 → LoRA）。
+- 当前方向已经问到机制，需要看学生能否写出对应前向（如 Attention → Multi-Head / scaled；LLaMA 组件 → RoPE / RMSNorm / SwiGLU；推理 → KV Cache / PagedAttention；微调 → LoRA）。到了这一层就必须打开编辑器，不要继续只问口头细节。
 - 面经常考、且贴着本场方向与项目。禁止链表、排序、背包、二叉树等无关题。
 - 同一场同一 `exercise_id` 不重复。一轮最多打开一题。
 - 学生刚提交代码的这一轮只评价文本，不要再打开新题。
 - 学生说「手撕 / 请打开题 / 我想写」或在对话框贴了代码时，必须打开编辑器；普通问答禁止把代码当口答。
+- 题已打开或刚提交后，仍必须输出下一问；不要只思考不提问。
 - 与 `code_inspect` 并列：查仓库真伪用 inspect，核实会不会写用 exercise。
 
 ## 参数

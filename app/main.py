@@ -304,6 +304,16 @@ def list_job_samples(
     return paginate_library(kind, page, page_size)
 
 
+@app.get("/api/jds/{sample_id}")
+def read_job_sample(sample_id: str) -> dict[str, Any]:
+    """Return one sourced JD/interview note for the thought-panel expander."""
+
+    sample = find_library_sample(sample_id)
+    if sample is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="样本不存在")
+    return sample
+
+
 def _enforce_write_rate_limit(request: Request) -> None:
     client_ip = request.client.host if request.client else "unknown"
     now = monotonic()
@@ -399,10 +409,18 @@ def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def _sse_tool(name: str, args: dict[str, Any], result: str) -> str:
+def _sse_tool(
+    name: str,
+    args: dict[str, Any],
+    result: str,
+    extra: dict[str, Any] | None = None,
+) -> str:
     """Emit a candidate-safe tool event; excerpts stay in meta_json."""
 
-    return _sse("tool", {"name": name, "args": args, "result": result})
+    payload: dict[str, Any] = {"name": name, "args": args, "result": result}
+    if extra:
+        payload.update(extra)
+    return _sse("tool", payload)
 
 
 def _sse_tool_events(tool_events: list[dict[str, Any]]) -> list[str]:
@@ -411,11 +429,16 @@ def _sse_tool_events(tool_events: list[dict[str, Any]]) -> list[str]:
         payload = event.get("payload")
         if event.get("name") == "code_exercise" and isinstance(payload, dict):
             chunks.append(_sse("code_exercise", payload))
+        extra: dict[str, Any] = {}
+        hits = event.get("hits")
+        if isinstance(hits, list) and hits:
+            extra["hits"] = hits
         chunks.append(
             _sse_tool(
                 event.get("name") or "code_inspect",
                 event.get("args") or {},
                 event.get("result") or "",
+                extra or None,
             )
         )
     return chunks
@@ -461,6 +484,45 @@ def _turn_sse_headers() -> dict[str, str]:
     }
 
 
+def _public_session(session: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": session.get("id"),
+        "role": session.get("role"),
+        "statement": session.get("statement"),
+        "github_url": session.get("github_url"),
+        "directions": session.get("directions") or [],
+        "current_direction_id": session.get("current_direction_id"),
+        "first_question": session.get("first_question"),
+        "clone_ok": bool(session.get("clone_ok")),
+        "clone_error": session.get("clone_error"),
+        "status": session.get("status"),
+    }
+
+
+def _public_turn(turn: dict[str, Any]) -> dict[str, Any]:
+    meta = turn.get("meta")
+    return {
+        "seq": turn.get("seq"),
+        "role": turn.get("role"),
+        "body": turn.get("body"),
+        "direction_id": turn.get("direction_id"),
+        "meta": meta,
+    }
+
+
+def find_library_sample(sample_id: str) -> dict[str, Any] | None:
+    wanted = (sample_id or "").strip()
+    if not wanted:
+        return None
+    for filename, fallback in (("jds.json", "jd"), ("interviews.json", "interview")):
+        for sample in _load_samples(filename):
+            if str(sample.get("id") or "") == wanted:
+                copied = dict(sample)
+                copied.setdefault("kind", _sample_kind(sample, fallback))
+                return copied
+    return None
+
+
 def _stream_run_turn(
     *,
     session_id: str,
@@ -470,41 +532,57 @@ def _stream_run_turn(
     user_meta: dict[str, Any] | None = None,
     allow_code_exercise: bool = True,
 ) -> StreamingResponse:
+    progress: queue.Queue[dict[str, Any]] = queue.Queue()
     _active_turns.add(session_id)
 
+    def on_progress(event: dict[str, Any]) -> None:
+        progress.put(event)
+
+    def worker() -> None:
+        try:
+            turns = list_turns(session_id)
+            try:
+                value = run_turn(
+                    session=session,
+                    turns=turns,
+                    answer=answer,
+                    allow_code_exercise=allow_code_exercise,
+                    on_progress=on_progress,
+                )
+            except TypeError:
+                value = run_turn(
+                    session=session,
+                    turns=turns,
+                    answer=answer,
+                    allow_code_exercise=allow_code_exercise,
+                )
+            result, next_direction_id, tool_bundle = value
+            append_turn_bundle(
+                session_id=session_id,
+                user_answer=stored_answer if stored_answer is not None else answer,
+                thought=result.thought,
+                next_question=result.next_question,
+                direction_id=session["current_direction_id"],
+                next_direction_id=next_direction_id,
+                meta=tool_bundle.get("meta") or None,
+                user_meta=user_meta,
+            )
+            progress.put({"kind": "_done", "value": value})
+        except LLMError as exc:
+            progress.put({"kind": "_error", "llm": True, "error": exc})
+        except Exception as exc:
+            progress.put({"kind": "_error", "llm": False, "error": exc})
+        finally:
+            _active_turns.discard(session_id)
+            progress.put({"kind": "_finished"})
+
+    loop = asyncio.get_running_loop()
+    worker_future = loop.run_in_executor(None, worker)
+
     async def event_stream() -> AsyncIterator[str]:
-        progress: queue.Queue[dict[str, Any]] = queue.Queue()
         seen_tool_names: set[str] = set()
-        thought_parts: list[str] = []
         live_thought: list[str] = []
         tools_started = False
-
-        def on_progress(event: dict[str, Any]) -> None:
-            progress.put(event)
-
-        def worker() -> None:
-            try:
-                turns = list_turns(session_id)
-                try:
-                    value = run_turn(
-                        session=session,
-                        turns=turns,
-                        answer=answer,
-                        allow_code_exercise=allow_code_exercise,
-                        on_progress=on_progress,
-                    )
-                except TypeError:
-                    value = run_turn(
-                        session=session,
-                        turns=turns,
-                        answer=answer,
-                        allow_code_exercise=allow_code_exercise,
-                    )
-                progress.put({"kind": "_done", "value": value})
-            except LLMError as exc:
-                progress.put({"kind": "_error", "llm": True, "error": exc})
-            except Exception as exc:
-                progress.put({"kind": "_error", "llm": False, "error": exc})
 
         def leftover_tool_chunks(event: dict[str, Any]) -> list[str]:
             name = _tool_name(event)
@@ -515,108 +593,113 @@ def _stream_run_turn(
 
         try:
             yield ": thinking\n\n"
-            worker_task = asyncio.create_task(asyncio.to_thread(worker))
-            try:
-                while True:
-                    event = await asyncio.to_thread(progress.get)
-                    kind = event.get("kind")
-                    if kind == "tool_start":
-                        name = str(event.get("name") or "")
-                        tools_started = True
-                        if name and name not in seen_tool_names:
-                            yield _sse("tool_start", tool_start_payload(name))
-                            await asyncio.sleep(0)
+            while True:
+                try:
+                    event = await asyncio.to_thread(progress.get, True, 4.0)
+                except queue.Empty:
+                    yield ": keepalive\n\n"
+                    continue
+                kind = event.get("kind")
+                if kind == "_finished":
+                    return
+                if kind == "tool_start":
+                    name = str(event.get("name") or "")
+                    tools_started = True
+                    if name and name not in seen_tool_names:
+                        yield _sse("tool_start", tool_start_payload(name))
+                        await asyncio.sleep(0)
+                    continue
+                if kind == "tool":
+                    tools_started = True
+                    tool_event = event.get("event") or {}
+                    for chunk in leftover_tool_chunks(tool_event):
+                        yield chunk
+                        await asyncio.sleep(0)
+                    continue
+                if kind == "thought_delta":
+                    text = str(event.get("text") or "")
+                    if not text:
                         continue
-                    if kind == "tool":
-                        tools_started = True
-                        tool_event = event.get("event") or {}
+                    if seen_tool_names or tools_started:
+                        live_thought.append(text)
+                        yield _sse("thought_delta", {"text": text})
+                        await asyncio.sleep(0)
+                    continue
+                if kind == "_error":
+                    if event.get("llm"):
+                        logger.warning(
+                            "turn stream LLMError",
+                            exc_info=event.get("error"),
+                        )
+                        yield _sse(
+                            "error",
+                            {"message": "MiniMax 暂时无法继续追问，请稍后重试"},
+                        )
+                    else:
+                        logger.exception(
+                            "turn stream failed",
+                            exc_info=event.get("error"),
+                        )
+                        yield _sse("error", {"message": "本轮追问失败，请稍后重试"})
+                    yield _sse("done", {})
+                    continue
+                if kind == "_done":
+                    result, next_direction_id, tool_bundle = event["value"]
+                    tool_events = tool_bundle.get("events") or []
+                    for tool_event in tool_events:
                         for chunk in leftover_tool_chunks(tool_event):
                             yield chunk
                             await asyncio.sleep(0)
-                        continue
-                    if kind == "thought_delta":
-                        text = str(event.get("text") or "")
-                        if not text:
-                            continue
-                        if seen_tool_names or tools_started:
-                            live_thought.append(text)
-                            yield _sse("thought_delta", {"text": text})
-                            await asyncio.sleep(0)
-                        else:
-                            thought_parts.append(text)
-                        continue
-                    if kind == "_error":
-                        if event.get("llm"):
-                            logger.warning(
-                                "turn stream LLMError",
-                                exc_info=event.get("error"),
-                            )
-                            yield _sse(
-                                "error",
-                                {"message": "MiniMax 暂时无法继续追问，请稍后重试"},
-                            )
-                        else:
-                            logger.exception(
-                                "turn stream failed",
-                                exc_info=event.get("error"),
-                            )
-                            yield _sse("error", {"message": "本轮追问失败，请稍后重试"})
-                        yield _sse("done", {})
-                        return
-                    if kind == "_done":
-                        result, next_direction_id, tool_bundle = event["value"]
-                        tool_events = tool_bundle.get("events") or []
-                        tool_meta = tool_bundle.get("meta") or []
-                        for tool_event in tool_events:
-                            for chunk in leftover_tool_chunks(tool_event):
-                                yield chunk
+
+                    shown = "".join(live_thought)
+                    if shown:
+                        if result.thought.startswith(shown):
+                            extra = result.thought[len(shown) :]
+                            if extra:
+                                yield _sse("thought_delta", {"text": extra})
                                 await asyncio.sleep(0)
+                    else:
+                        for chunk in _chunk_thought_sections(result.thought):
+                            yield _sse("thought_delta", {"text": chunk})
+                            await asyncio.sleep(0.04)
 
-                        shown = "".join(live_thought)
-                        if shown:
-                            if result.thought.startswith(shown):
-                                extra = result.thought[len(shown) :]
-                                if extra:
-                                    yield _sse("thought_delta", {"text": extra})
-                                    await asyncio.sleep(0)
-                        else:
-                            for chunk in _chunk_thought_sections(result.thought):
-                                yield _sse("thought_delta", {"text": chunk})
-                                await asyncio.sleep(0.04)
-
-                        await asyncio.to_thread(
-                            append_turn_bundle,
-                            session_id=session_id,
-                            user_answer=(
-                                stored_answer if stored_answer is not None else answer
-                            ),
-                            thought=result.thought,
-                            next_question=result.next_question,
-                            direction_id=session["current_direction_id"],
-                            next_direction_id=next_direction_id,
-                            meta=tool_meta or None,
-                            user_meta=user_meta,
-                        )
-                        yield _sse(
-                            "question",
-                            {
-                                "text": result.next_question,
-                                "direction_id": next_direction_id,
-                                "direction_done": result.direction_done,
-                            },
-                        )
-                        yield _sse("done", {})
-                        return
-            finally:
-                await worker_task
+                    yield _sse(
+                        "question",
+                        {
+                            "text": result.next_question,
+                            "direction_id": next_direction_id,
+                            "direction_done": result.direction_done,
+                        },
+                    )
+                    yield _sse("done", {})
+                    continue
+        except asyncio.CancelledError:
+            logger.info("turn subscriber left; worker keeps running %s", session_id)
+            return
         finally:
-            _active_turns.discard(session_id)
+            if not worker_future.done():
+                worker_future.add_done_callback(lambda _f: None)
 
     return StreamingResponse(
         event_stream(),
         media_type="text/event-stream",
         headers=_turn_sse_headers(),
     )
+
+
+@app.get("/api/sessions/{session_id}")
+async def read_live_session(session_id: str) -> dict[str, Any]:
+    """Return the live session plus turns so the UI can recover after a dropped stream."""
+
+    session = await asyncio.to_thread(get_session, session_id)
+    if session is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="会话不存在")
+    turns = await asyncio.to_thread(list_turns, session_id)
+    return {
+        "session": _public_session(session),
+        "turns": [_public_turn(item) for item in turns],
+        "pending": session_id in _active_turns,
+    }
 
 
 @app.post("/api/sessions/{session_id}/turns")

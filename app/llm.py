@@ -261,7 +261,7 @@ def complete_text_with_tools(
     tools: list[dict[str, Any]],
     run_tool: ToolRunner,
     max_tool_rounds: int = 2,
-    max_tokens: int = 6144,
+    max_tokens: int = 8192,
 ) -> str:
     """Tool-enabled completion that returns the final markdown/text body."""
 

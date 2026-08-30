@@ -10,7 +10,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from app.llm import LLMError, complete_json, complete_json_with_tools, complete_text_with_tools
-from app.models import DirectionPlan, TurnResult
+from app.models import BROAD_TURN_QUESTION, CODE_COORDINATE, DirectionPlan, TurnResult
 from app.report import (
     build_end_report_context,
     build_report_from_parts,
@@ -26,6 +26,7 @@ from app.roles import (
 from app.tools.code_exercise import (
     CODE_EXERCISE_TOOL,
     catalog_for_prompt,
+    match_implementation_exercise,
     run_code_exercise_from_tool_args,
     used_exercise_ids,
 )
@@ -35,8 +36,10 @@ from app.tools.code_inspect import (
 )
 from app.tools.search_library import (
     SEARCH_LIBRARY_TOOL,
-    default_search_query,
+    LibrarySearchResult,
+    is_unsearchable_query,
     run_search_library_from_tool_args,
+    topic_search_query,
 )
 
 
@@ -142,6 +145,13 @@ def _format_history(turns: list[dict[str, Any]]) -> str:
             prefix = "思考"
         lines.append(f"{prefix}: {turn['body']}")
     return "\n".join(lines)
+
+
+def _latest_interviewer_question(turns: list[dict[str, Any]]) -> str:
+    for turn in reversed(turns):
+        if turn.get("role") == "interviewer":
+            return str(turn.get("body") or "").strip()
+    return ""
 
 
 STUCK_MARKERS = (
@@ -366,6 +376,28 @@ TOOL_START_LABELS = {
     "code_inspect": "正在调用查仓库工具",
     "code_exercise": "正在打开手撕题",
 }
+KNOWN_TOOLS = frozenset(TOOL_START_LABELS)
+TOOL_NAME_ALIASES = {
+    "search": "search_library",
+    "searchlibrary": "search_library",
+    "检索面经": "search_library",
+    "inspect": "code_inspect",
+    "codeinspect": "code_inspect",
+    "查仓库": "code_inspect",
+    "exercise": "code_exercise",
+    "codeexercise": "code_exercise",
+    "手撕": "code_exercise",
+}
+
+
+def resolve_tool_name(name: str) -> str | None:
+    """Map a model tool call onto the three real tools. Refuse thought/JSON keys."""
+
+    raw = (name or "").strip()
+    if raw in KNOWN_TOOLS:
+        return raw
+    compact = re.sub(r"[\s_-]+", "", raw).lower()
+    return TOOL_NAME_ALIASES.get(raw) or TOOL_NAME_ALIASES.get(compact)
 ProgressFn = Callable[[dict[str, Any]], None]
 
 
@@ -433,7 +465,103 @@ def _stay_next_question(direction: dict[str, str], answer: str) -> str:
         text = "刚才这步你还没讲清。换个更朴素的说法，在你项目里这一步实际是怎么做的？"
     else:
         text = f"还在「{title}」上。请接着上一问，把下一步机制讲具体，不要跳到别的方向？"
-    return text[:360]
+    return text[:240]
+
+
+CONTRACT_ECHO = re.compile(
+    r"必须只问一个微步骤|只问一个微步骤|next_question 必填|必须给出 next_question"
+)
+
+
+def sanitize_next_question(
+    question: str,
+    *,
+    direction: dict[str, str],
+    answer: str,
+) -> str:
+    """Keep a single oral follow-up even if the model stacked questions."""
+
+    text = re.sub(r"\s+", " ", (question or "").strip())
+    text = CODE_COORDINATE.sub("", text).strip(" ，,;；")
+    if text.count("？") + text.count("?") > 1:
+        first = re.split(r"[？?]", text, maxsplit=1)[0].strip()
+        text = f"{first}？" if first else ""
+    if (
+        len(text) < 4
+        or BROAD_TURN_QUESTION.search(text)
+        or CONTRACT_ECHO.search(text)
+    ):
+        return _stay_next_question(direction, answer)
+    return text[:240]
+
+
+def coerce_turn_payload(
+    raw: dict[str, Any],
+    *,
+    direction: dict[str, str],
+    answer: str,
+) -> dict[str, Any]:
+    """Salvage a near-legal turn so thought is never left without a reply."""
+
+    thought = str(raw.get("thought") or "").strip()
+    for token in ("建议你", "总评", "复习", "岗位本质对照", "岗位匹配"):
+        thought = thought.replace(token, "")
+    if "评价" not in thought:
+        thought = f"评价：先接住这一答。\n{thought}".strip()
+    if "查代码" not in thought and "查代码" not in thought.lower():
+        thought = f"{thought}\n查代码：否".strip()
+    if "本方向结束" not in thought:
+        thought = f"{thought}\n本方向结束：否，继续当前方向。".strip()
+    return {
+        "thought": thought[:4000],
+        "direction_done": bool(raw.get("direction_done")),
+        "next_question": sanitize_next_question(
+            str(raw.get("next_question") or ""),
+            direction=direction,
+            answer=answer,
+        ),
+    }
+
+
+def fallback_turn_result(direction: dict[str, str], answer: str) -> TurnResult:
+    return TurnResult.model_validate(
+        coerce_turn_payload({}, direction=direction, answer=answer)
+    )
+
+
+def _recent_talk_text(turns: list[dict[str, Any]] | None) -> str:
+    parts: list[str] = []
+    for turn in reversed(turns or []):
+        if turn.get("role") not in {"interviewer", "user"}:
+            continue
+        parts.append(str(turn.get("body") or ""))
+        if len(parts) >= 4:
+            break
+    return "\n".join(reversed(parts))
+
+
+def suggested_code_exercise_args(
+    *,
+    answer: str,
+    turns: list[dict[str, Any]] | None,
+    used_ids: set[str],
+) -> dict[str, str] | None:
+    if "[手撕提交" in (answer or "") or is_stuck_answer(answer):
+        return None
+    if is_unsearchable_query(answer or ""):
+        return None
+    explicit = requested_code_exercise_args(answer)
+    if explicit:
+        return explicit
+    last_question = _latest_interviewer_question(turns or [])
+    found = match_implementation_exercise(
+        recent_text=f"{_recent_talk_text(turns)}\n{last_question}",
+        current_text=answer,
+        used_ids=used_ids,
+    )
+    if found is None:
+        return None
+    return {"exercise_id": found.id}
 
 
 def _strip_end_advocacy(question: str) -> str:
@@ -486,12 +614,13 @@ def tool_start_payload(name: str) -> dict[str, str]:
 TURN_JSON_CONTRACT = """仓库不在上下文中。要核对真伪或决定同方向怎么引，就调用 code_inspect。
 禁止把路径、文件名或行号写入 next_question；tool 结果只影响评价和引导，不得念出坐标。
 clone 不可用时 tool 会返回仓库不可用，面试继续，不要假装看过代码。
-出下一问前必须调用 search_library，用面经原问改写成一个微步骤；禁止把检索结果合并成一串大题。
-检索结果只给自己看，不要把 query、命中条数或「检索面经：……」写进 thought。
-需要核实「会不会写」且属于面经常考实现时，调用 code_exercise（exercise_id 或 topic）。
-学生说手撕/打开题/想写，或在对话框里贴了一串代码时，必须调用 code_exercise 打开编辑器；
-普通问答禁止把代码当口答，不要让学生在对话框交代码。
-服务端只从题库取题，禁止编题。同一场同一题不重复，一轮最多一题。
+每轮会先按**当前话题**检索面经并写进上下文；有命中就改写其中一条原问，条数不固定，没有相关命中就按对话追问，禁止为了凑条数再搜无关内容。
+若要换更具体的技术词再搜一次，query 必须是话题词（RoPE、LoRA 秩、KV cache），禁止用「请继续问吧 / 换个话题 / 好的」当检索词。
+检索结果只给自己看，用来改写下一问；不要把 query、命中条数或「检索面经：……」写进 thought。
+聊到 RoPE / MHA / RMSNorm / KV Cache / LoRA 等具体实现时，必须调用 code_exercise，不要只口头连问细节。
+学生说手撕/打开题/想写，或在对话框里贴了一串代码时，也必须打开编辑器。
+题已打开或学生刚提交后，禁止再调用；next_question 不能空，只问一个微步骤、一个问号。
+普通问答禁止把代码当口答。服务端只从题库取题，同一场同一题不重复，一轮最多一题。
 {exercise_prompt}
 浅答、短答、只复述术语、第一次说不懂时，direction_done 必须是 false，next_question 必须仍锁在当前方向。
 只有学生明确表示不会/不知道且换说法仍空白，或当前 goal 的检查点都已问到，才允许 direction_done=true。
@@ -583,19 +712,6 @@ def run_turn(
         allow_code_exercise=allow_code_exercise,
     )
 
-    user_prompt = f"""
-对话史：
-{_format_history(turns)}
-
-学生刚刚的回答 JSON：
-{json.dumps(answer, ensure_ascii=False)}
-
-请只锁在当前方向继续深挖。答得差也只换更朴素的说法，不要跳方向，不要发明新方向，不要给建议或总评，不要劝结束。
-先 search_library 再出下一问；下一问只问一件事。
-若回答声称了仓库里可能对不上的实现（例如 rerank、万卡分布式训练），必须先调用 code_inspect 再出下一问。
-学生要手撕或在对话框贴了代码时，必须调用 code_exercise 打开编辑器，不要把代码当口答。
-""".strip()
-
     result: TurnResult | None = None
     last_error: Exception | None = None
     retry_hint = ""
@@ -619,10 +735,13 @@ def run_turn(
             emit({"kind": "tool_start", **tool_start_payload(name)})
         tool_meta.append(meta_item)
         tool_events.append(event)
-        if first:
-            emit({"kind": "tool", "event": event})
+        emit({"kind": "tool", "event": event})
 
     def run_tool(name: str, args: dict[str, Any]) -> str:
+        resolved = resolve_tool_name(name)
+        if resolved is None:
+            return "只能使用 search_library、code_inspect 或 code_exercise。不要调用 thought 或其他名字。"
+        name = resolved
         if name == "code_inspect":
             inspect = run_code_inspect_from_tool_args(
                 session["id"],
@@ -682,17 +801,100 @@ def run_turn(
             found = run_search_library_from_tool_args(args)
             model_text = found.for_model()
             public_text = found.for_public()
+            hits = found.public_hits()
+            tool_events[:] = [
+                event for event in tool_events if event.get("name") != "search_library"
+            ]
+            tool_meta[:] = [
+                item for item in tool_meta if item.get("name") != "search_library"
+            ]
             record_tool(
-                {"name": name, "args": args, "result": public_text},
-                {"name": name, "args": args, "result": model_text},
+                {
+                    "name": name,
+                    "args": args,
+                    "result": public_text,
+                    "hits": hits,
+                },
+                {
+                    "name": name,
+                    "args": args,
+                    "result": model_text,
+                    "hits": hits,
+                },
             )
             return model_text
-        text = "未知 tool，忽略。"
-        record_tool(
-            {"name": name, "args": args, "result": text},
-            {"name": name, "args": args, "result": text},
+        return "只能使用 search_library、code_inspect 或 code_exercise。不要调用 thought 或其他名字。"
+
+    topic_query = topic_search_query(
+        direction_title=str(current_direction.get("title") or ""),
+        last_question=_latest_interviewer_question(turns),
+        answer=answer,
+    )
+    seeded_search = (
+        run_search_library_from_tool_args(
+            {"query": topic_query, "kind": "interview"}
         )
-        return text
+        if topic_query
+        else LibrarySearchResult(ok=True, query="", hits=[])
+    )
+    suggested_exercise = (
+        suggested_code_exercise_args(
+            answer=answer,
+            turns=turns,
+            used_ids=set(opened_ids),
+        )
+        if allow_code_exercise
+        else None
+    )
+    exercise_hint = ""
+    if opened_ids:
+        exercise_hint += (
+            f"\n本场已开过手撕：{', '.join(sorted(opened_ids))}。"
+            "同一题不要再调用 code_exercise。"
+            "next_question 不能空，只问一个实现点、一个问号。"
+        )
+    if suggested_exercise:
+        selector = suggested_exercise.get("exercise_id") or suggested_exercise.get(
+            "topic", "当前实现"
+        )
+        exercise_hint += (
+            f"\n当前话题已落到题库实现（{selector}）。"
+            "本轮必须调用 code_exercise 打开编辑器，下一问承接这道手撕，"
+            "不要再口头连问两个细节。"
+        )
+    user_prompt = f"""
+对话史：
+{_format_history(turns)}
+
+学生刚刚的回答 JSON：
+{json.dumps(answer, ensure_ascii=False)}
+
+本轮已按当前话题检索面经，供你改写下一问。命中条数不固定，没有相关原问就按对话追问，不要凑题。
+{seeded_search.for_model()}
+{exercise_hint}
+
+请只锁在当前方向继续深挖。答得差也只换更朴素的说法，不要跳方向，不要发明新方向，不要给建议或总评，不要劝结束。
+下一问只问一件事，必须给出 next_question。
+若回答声称了仓库里可能对不上的实现（例如 rerank、万卡分布式训练），必须先调用 code_inspect 再出下一问。
+学生要手撕或在对话框贴了代码时，必须调用 code_exercise 打开编辑器，不要把代码当口答。
+""".strip()
+
+    def seed_topic_search() -> None:
+        hits = seeded_search.public_hits()
+        record_tool(
+            {
+                "name": "search_library",
+                "args": {"query": topic_query, "kind": "interview"},
+                "result": seeded_search.for_public(),
+                "hits": hits,
+            },
+            {
+                "name": "search_library",
+                "args": {"query": topic_query, "kind": "interview"},
+                "result": seeded_search.for_model(),
+                "hits": hits,
+            },
+        )
 
     for _attempt in range(2):
         tool_events.clear()
@@ -700,6 +902,7 @@ def run_turn(
         opened_ids.clear()
         opened_ids.update(used_exercise_ids(turns))
         seen_tool_names.clear()
+        seed_topic_search()
         try:
             raw_result = complete_json_with_tools(
                 system_prompt,
@@ -707,8 +910,15 @@ def run_turn(
                 tools=turn_tools,
                 run_tool=run_tool,
                 max_tool_rounds=2,
+                on_progress=on_progress,
             )
-            result = TurnResult.model_validate(raw_result)
+            result = TurnResult.model_validate(
+                coerce_turn_payload(
+                    raw_result,
+                    direction=current_direction,
+                    answer=answer,
+                )
+            )
             break
         except (ValidationError, LLMError) as exc:
             last_error = exc
@@ -717,33 +927,13 @@ def run_turn(
                 "\n\n上次输出不合规或为空。请重新输出合法 JSON："
                 "thought 必须含评价、查代码、本方向结束；"
                 "不要把检索面经写进 thought；"
-                "不要建议或总评；next_question 只问一个微步骤、一个问号、"
+                "不要建议或总评；next_question 必填，只问一个微步骤、一个问号、"
                 "大约 40 到 80 个汉字，不要分别/以及/同时，不要文件名行号。"
             )
     if result is None:
-        raise LLMError("MiniMax turn result did not match the contract") from last_error
+        logger.warning("turn fallback after failed contract: %s", last_error)
+        result = fallback_turn_result(current_direction, answer)
 
-    if not any(event.get("name") == "search_library" for event in tool_events):
-        search_query = default_search_query(
-            direction_title=str(current_direction.get("title") or ""),
-            direction_goal=str(current_direction.get("goal") or ""),
-            answer=answer,
-        )
-        found = run_search_library_from_tool_args(
-            {"query": search_query, "kind": "interview"}
-        )
-        record_tool(
-            {
-                "name": "search_library",
-                "args": {"query": search_query, "kind": "interview"},
-                "result": found.for_public(),
-            },
-            {
-                "name": "search_library",
-                "args": {"query": search_query, "kind": "interview"},
-                "result": found.for_model(),
-            },
-        )
 
     inspect_query = fabricated_inspect_query(answer)
     if inspect_query and not any(
@@ -773,7 +963,7 @@ def run_turn(
         event.get("name") == "code_exercise" and event.get("payload")
         for event in tool_events
     ):
-        exercise_args = requested_code_exercise_args(answer)
+        exercise_args = suggested_exercise or requested_code_exercise_args(answer)
         if exercise_args:
             opened = run_code_exercise_from_tool_args(
                 exercise_args,
@@ -881,6 +1071,7 @@ def _parse_report_output(raw: str) -> str:
             parts = {
                 "overall": parsed.get("overall") or parsed.get("总评"),
                 "job_essence_compare": parsed.get("job_essence_compare")
+                or parsed.get("岗位匹配")
                 or parsed.get("岗位本质对照"),
                 "knowledge_advice": parsed.get("knowledge_advice")
                 or parsed.get("知识建议"),
@@ -924,10 +1115,11 @@ clone 不可用时 tool 会返回仓库不可用，仍按口头回答评估，�
 
 请按 report.md 写满四段，二级标题必须原样出现：
 ## 总评
-## 岗位本质对照
+## 岗位匹配
 ## 知识建议
 ## 项目改良
 
+「岗位匹配」必须写完三块并收束，禁止停在开引号：已经覆盖 / 口头能讲仓库撑不住 / 岗位在意但本项目没有。
 总评第一句必须是：整场主档：四档之一。
 依据只能引用本场问答原句。不要因为项目陈述好看就抬档，也不要因为追问多就压档。
 """.strip()
@@ -963,7 +1155,7 @@ clone 不可用时 tool 会返回仓库不可用，仍按口头回答评估，�
             user_prompt + retry_hint,
             tools=[CODE_INSPECT_TOOL],
             run_tool=run_tool,
-            max_tokens=6144,
+            max_tokens=8192,
         )
         try:
             report_text = _parse_report_output(raw_report)
@@ -973,7 +1165,8 @@ clone 不可用时 tool 会返回仓库不可用，仍按口头回答评估，�
             logger.warning("end report failed section contract: %s", exc)
             retry_hint = (
                 "\n\n上次输出缺少必要段落或整场主档。请重新输出完整报告，"
-                "必须原样包含：总评、岗位本质对照、知识建议、项目改良；"
+                "必须原样包含：总评、岗位匹配、知识建议、项目改良；"
+                "「岗位匹配」三段（已覆盖 / 口头能讲仓库撑不住 / 岗位在意但本项目没有）必须写完并收句，禁止停在开引号；"
                 "总评第一句必须是「整场主档：」加上四档之一。"
             )
     if report_text is None:
