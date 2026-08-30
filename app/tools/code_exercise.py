@@ -1,9 +1,10 @@
-"""Catalog-backed hand-write exercises; the model must not invent prompts."""
+"""Hand-write exercises sourced from the bank index or interview originals."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from functools import lru_cache
+import hashlib
 import json
 from pathlib import Path
 import re
@@ -14,7 +15,8 @@ JD_DIR = Path(__file__).resolve().parent.parent / "jd"
 BANK_PATH = JD_DIR / "code_exercises.json"
 EXERCISE_ID_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 ERROR_UNKNOWN_ID = "题库无此 id，不要现场编题。"
-ERROR_NO_TOPIC_MATCH = "题库没有与该 topic 对应的题，不要现场编题。"
+ERROR_NO_TOPIC_MATCH = "面经没有提到相关手撕，不要现场编题。"
+ERROR_UNRELATED_ALGO = "禁止出链表、排序、背包等无关算法题。"
 ERROR_MISSING_SELECTOR = "必须提供 exercise_id 或 topic，不要现场编题。"
 ERROR_DUPLICATE = "本场已出过此题，不要重复打开。"
 ERROR_ONE_PER_TURN = "本轮已打开一题，不要再调用。"
@@ -26,9 +28,10 @@ CODE_EXERCISE_TOOL: dict[str, object] = {
     "function": {
         "name": "code_exercise",
         "description": (
-            "聊到面经常考的具体实现（RoPE、MHA、RMSNorm、KV Cache、LoRA 等）"
-            "时必须打开题库手撕，不要只口头连问细节。"
-            "必须带 exercise_id 或 topic；禁止自拟题面或出无关算法题。"
+            "聊到面经里提到的具体实现（RoPE、MHA、RMSNorm、KV Cache、LoRA 等）"
+            "时必须打开手撕，不要只口头连问细节。"
+            "必须带 exercise_id 或 topic。先查加速题库，没有命中再按面经原问出题。"
+            "禁止自拟新考点或出链表/排序/背包。没有相关面经就继续口头问。"
             "同一场同一题不重复，一轮最多一题。题已打开或已交过就不要再调。"
         ),
         "parameters": {
@@ -60,13 +63,16 @@ class CodeExercise:
     roles: tuple[str, ...]
 
     def sse_payload(self) -> dict[str, str]:
-        return {
+        payload = {
             "exercise_id": self.id,
             "title": self.title,
             "prompt": self.prompt,
             "language": self.language,
             "starter": self.starter,
         }
+        if self.source_ids:
+            payload["sample_id"] = self.source_ids[0]
+        return payload
 
 
 @dataclass(frozen=True)
@@ -161,16 +167,36 @@ def load_exercises() -> tuple[CodeExercise, ...]:
     return tuple(loaded)
 
 
+_DYNAMIC_EXERCISES: dict[str, CodeExercise] = {}
+GENERIC_STARTER = (
+    "def forward(*args, **kwargs):\n"
+    "    # 按面经原问补全当前这一步，不要改成无关算法题\n"
+    "    raise NotImplementedError\n"
+)
+UNRELATED_ALGO_RE = re.compile(
+    r"链表|背包|两数之和|三数之和|快排|快速排序|归并排序|堆排序|"
+    r"滑动窗口|二叉树|最近公共祖先|合并区间|最长有效括号|"
+    r"划分子集|井字棋|路径总和|最小.?k.?个|覆盖字串|麻将|"
+    r"two.?sum|leetcode|乘积最大|反转链表|最长子数组",
+    re.I,
+)
+
+
 def get_exercise(exercise_id: str) -> CodeExercise | None:
     cleaned = (exercise_id or "").strip()
     for exercise in load_exercises():
         if exercise.id == cleaned:
             return exercise
-    return None
+    return _DYNAMIC_EXERCISES.get(cleaned)
+
+
+def _remember_exercise(exercise: CodeExercise) -> CodeExercise:
+    _DYNAMIC_EXERCISES[exercise.id] = exercise
+    return exercise
 
 
 def catalog_for_prompt() -> str:
-    lines = ["可调用手撕题库（只能从下列选题，禁止编题）："]
+    lines = ["可调用手撕（题库作索引；面经里提到的相关手撕才出，禁止编题）："]
     for exercise in load_exercises():
         topics = "、".join(exercise.topics)
         lines.append(f"- {exercise.id}：{exercise.title}（{topics}）")
@@ -258,10 +284,89 @@ def match_implementation_exercise(
                 score += 10 + len(token)
         if score:
             hits.append((score, exercise))
-    if not hits:
+    if hits:
+        hits.sort(key=lambda item: (-item[0], item[1].id))
+        return hits[0][1]
+    query = (recent_text or current_text or "")[:120]
+    if is_unrelated_algorithm(query):
         return None
-    hits.sort(key=lambda item: (-item[0], item[1].id))
-    return hits[0][1]
+    return match_interview_exercise(query, used_ids=used)
+
+
+def is_unrelated_algorithm(text: str) -> bool:
+    return bool(UNRELATED_ALGO_RE.search(text or ""))
+
+
+def _topic_in_text(topic: str, text: str) -> bool:
+    needle = _normalize(topic)
+    hay = _normalize(text)
+    if needle and needle in hay:
+        return True
+    tokens = [token for token in re.split(r"[\s_\-/]+", needle) if len(token) >= 2]
+    tokens.extend(_normalize(chunk) for chunk in re.findall(r"[\u4e00-\u9fff]{2,}", topic or ""))
+    return any(token and token in hay for token in tokens)
+
+
+def _interview_exercise_id(sample_id: str, snippet: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", (sample_id or "sample").lower()).strip("-")
+    slug = (slug or "sample")[:48]
+    digest = hashlib.sha1((snippet or "").encode("utf-8")).hexdigest()[:8]
+    return f"iv-{slug}-{digest}"
+
+
+def _starter_for_interview(topic: str, snippet: str) -> str:
+    bank = match_exercise(snippet) or match_exercise(topic)
+    if bank is not None:
+        return bank.starter
+    return GENERIC_STARTER
+
+
+def _exercise_from_interview_hit(hit: Any, topic: str) -> CodeExercise:
+    snippet = re.sub(r"\s+", " ", str(getattr(hit, "snippet", "") or "")).strip()
+    title_seed = snippet[:24].rstrip("，,。；; ") or topic[:20] or "手撕"
+    prompt = (
+        "对照面经原问，用 Python 写出当前这一步。不要改成链表、排序、背包。"
+        f"\n\n原问：{snippet}"
+    )
+    sample = str(getattr(hit, "sample_id", "")).strip()
+    exercise = CodeExercise(
+        id=_interview_exercise_id(sample, snippet),
+        title=f"手撕 {title_seed}",
+        prompt=prompt,
+        language="python",
+        starter=_starter_for_interview(topic, snippet),
+        source_ids=(sample,) if sample else ("interview",),
+        topics=_as_str_tuple(topic),
+        roles=(),
+    )
+    return _remember_exercise(exercise)
+
+
+def match_interview_exercise(
+    topic: str,
+    *,
+    used_ids: set[str] | None = None,
+) -> CodeExercise | None:
+    """Open a 手撕 from interview originals when the json bank has no hit."""
+
+    cleaned = (topic or "").strip()
+    if not cleaned or is_unrelated_algorithm(cleaned):
+        return None
+    from app.tools.search_library import search_handwrite_interviews
+
+    used = used_ids or set()
+    result = search_handwrite_interviews(cleaned)
+    for hit in result.hits:
+        snippet = hit.snippet or ""
+        if not _topic_in_text(cleaned, snippet):
+            continue
+        if is_unrelated_algorithm(snippet) and is_unrelated_algorithm(cleaned):
+            continue
+        exercise_id = _interview_exercise_id(hit.sample_id, snippet)
+        if exercise_id in used:
+            continue
+        return _exercise_from_interview_hit(hit, cleaned)
+    return None
 
 
 def match_exercise(
@@ -347,6 +452,10 @@ def resolve_exercise(
         role=role,
         direction_text=direction_text,
     )
+    if exercise is None and is_unrelated_algorithm(topic):
+        return CodeExerciseOpen(ok=False, error=ERROR_UNRELATED_ALGO, exercise=None)
+    if exercise is None:
+        exercise = match_interview_exercise(topic, used_ids=used)
     if exercise is None:
         return CodeExerciseOpen(ok=False, error=ERROR_NO_TOPIC_MATCH, exercise=None)
     return CodeExerciseOpen(ok=True, error=None, exercise=exercise)
@@ -360,7 +469,7 @@ def run_code_exercise_from_tool_args(
     direction_text: str = "",
     already_opened_this_turn: bool = False,
 ) -> CodeExerciseOpen:
-    """Bind a model tool-call payload to a catalog exercise."""
+    """Bind a model tool-call payload to a bank or interview-sourced exercise."""
 
     return resolve_exercise(
         arguments,
@@ -378,3 +487,52 @@ def format_submission_answer(exercise: CodeExercise, code: str) -> str:
         f"题面：{exercise.prompt}\n"
         f"学生代码：\n{code}"
     )
+
+
+def exercise_from_opened_turns(
+    turns: list[dict[str, Any]] | None,
+    exercise_id: str,
+) -> CodeExercise | None:
+    """Recover an opened exercise (bank or 面经) from turn meta payloads."""
+
+    wanted = (exercise_id or "").strip()
+    if not wanted:
+        return None
+    found = get_exercise(wanted)
+    if found is not None:
+        return found
+    for turn in turns or []:
+        meta = turn.get("meta")
+        if isinstance(meta, dict):
+            items = [meta]
+        elif isinstance(meta, list):
+            items = meta
+        else:
+            continue
+        for item in items:
+            if not isinstance(item, Mapping):
+                continue
+            payload = item.get("payload")
+            if not isinstance(payload, Mapping):
+                continue
+            if str(payload.get("exercise_id") or "") != wanted:
+                continue
+            starter = payload.get("starter")
+            prompt = str(payload.get("prompt") or "").strip()
+            title = str(payload.get("title") or "").strip() or "手撕代码"
+            if not isinstance(starter, str) or not starter or not prompt:
+                continue
+            sample = str(payload.get("sample_id") or "").strip()
+            return _remember_exercise(
+                CodeExercise(
+                    id=wanted,
+                    title=title,
+                    prompt=prompt,
+                    language=str(payload.get("language") or "python").strip() or "python",
+                    starter=starter,
+                    source_ids=(sample,) if sample else ("interview",),
+                    topics=(),
+                    roles=(),
+                )
+            )
+    return None

@@ -10,6 +10,7 @@ from app.tools.code_exercise import (
     ERROR_NO_TOPIC_MATCH,
     ERROR_ONE_PER_TURN,
     ERROR_UNKNOWN_ID,
+    ERROR_UNRELATED_ALGO,
     catalog_for_prompt,
     get_exercise,
     load_exercises,
@@ -79,7 +80,8 @@ def test_reject_invented_or_unrelated_topics() -> None:
 
     unrelated = resolve_exercise({"topic": "反转链表与背包问题"})
     assert unrelated.ok is False
-    assert unrelated.error == ERROR_NO_TOPIC_MATCH
+    assert unrelated.error == ERROR_UNRELATED_ALGO
+    assert unrelated.sse_payload() is None
 
 
 def test_same_exercise_not_repeated_and_one_per_turn() -> None:
@@ -143,3 +145,34 @@ def test_match_implementation_opens_rope_not_transformer_name_drop() -> None:
         used_ids=set(),
     )
     assert skipped is None
+
+
+def test_interview_sourced_handwrite_opens_with_sample_id() -> None:
+    rope = resolve_exercise({"topic": "RoPE"})
+    assert rope.ok and rope.exercise is not None
+    assert rope.exercise.id == "rope-apply"
+    assert rope.sse_payload()["sample_id"]
+
+    mha = resolve_exercise({"topic": "Multi-Head Attention"})
+    assert mha.ok and mha.exercise is not None
+    assert mha.exercise.id == "mha-forward"
+
+    entropy = resolve_exercise({"topic": "交叉熵"})
+    assert entropy.ok and entropy.exercise is not None
+    payload = entropy.sse_payload() or {}
+    assert payload.get("sample_id")
+    assert "原问" in (entropy.exercise.prompt or "")
+    assert entropy.exercise.starter
+    assert entropy.exercise.language == "python"
+
+
+def test_unrelated_algo_and_unmentioned_topic_stay_oral() -> None:
+    linked = resolve_exercise({"topic": "反转链表"})
+    assert linked.ok is False
+    assert linked.sse_payload() is None
+    assert linked.error in {ERROR_UNRELATED_ALGO, ERROR_NO_TOPIC_MATCH}
+
+    missing = resolve_exercise({"topic": "量子比特纠缠门分解"})
+    assert missing.ok is False
+    assert missing.error == ERROR_NO_TOPIC_MATCH
+    assert missing.sse_payload() is None

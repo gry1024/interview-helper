@@ -250,6 +250,76 @@ def is_unsearchable_query(query: str) -> bool:
     return bool(PROCESS_QUERY.search(compact))
 
 
+HANDWRITE_CUE_RE = re.compile(r"手撕|手写|写出|写一下|\bcode\b", re.I)
+HANDWRITE_IMPLEMENT_RE = re.compile(
+    r"实现.{0,24}(attention|rope|softmax|mha|gqa|mqa|lora|rms.?norm|"
+    r"swiglu|kv.?cache|交叉熵)",
+    re.I,
+)
+
+
+def is_handwrite_oriented_snippet(snippet: str) -> bool:
+    """True when a 面经 excerpt is asking the candidate to write an implementation."""
+
+    text = snippet or ""
+    if HANDWRITE_CUE_RE.search(text):
+        return True
+    return bool(HANDWRITE_IMPLEMENT_RE.search(text))
+
+
+def search_handwrite_interviews(
+    query: str,
+    *,
+    limit: int = 8,
+) -> LibrarySearchResult:
+    """Search interview notes, keep only 手撕/手写 oriented original questions."""
+
+    cleaned = (query or "").strip()
+    if not cleaned:
+        return LibrarySearchResult(ok=False, query="", hits=[], error=ERROR_EMPTY_QUERY)
+    primary = search_library(cleaned, kind="interview")
+    hinted = search_library(f"手撕 {cleaned} 手写 实现", kind="interview")
+    merged: list[LibraryHit] = []
+    seen: set[str] = set()
+
+    def _take(hit: LibraryHit) -> None:
+        fingerprint = f"{hit.sample_id}:{hit.snippet[:80]}"
+        if fingerprint in seen:
+            return
+        if not is_handwrite_oriented_snippet(hit.snippet):
+            return
+        seen.add(fingerprint)
+        merged.append(hit)
+
+    for hit in hinted.hits + primary.hits:
+        _take(hit)
+        if len(merged) >= max(0, limit):
+            return LibrarySearchResult(ok=True, query=cleaned, hits=merged)
+
+    needle = cleaned.casefold()
+    chunks, _df = _load_index(_index_cache_key())
+    for chunk in chunks:
+        if chunk.kind != "interview":
+            continue
+        if needle not in chunk.snippet.casefold() and needle not in " ".join(chunk.tokens):
+            continue
+        _take(
+            LibraryHit(
+                sample_id=chunk.sample_id,
+                kind=chunk.kind,
+                company=chunk.company,
+                role=chunk.role,
+                source_name=chunk.source_name,
+                source_url=chunk.source_url,
+                snippet=chunk.snippet,
+                score=1.0,
+            )
+        )
+        if len(merged) >= max(0, limit):
+            break
+    return LibrarySearchResult(ok=True, query=cleaned, hits=merged)
+
+
 def search_library(
     query: str,
     *,

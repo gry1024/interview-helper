@@ -39,7 +39,11 @@ from app.models import (
     TurnCreate,
 )
 from app.teacher import write_teacher_hint
-from app.tools.code_exercise import format_submission_answer, get_exercise
+from app.tools.code_exercise import (
+    exercise_from_opened_turns,
+    format_submission_answer,
+    get_exercise,
+)
 from app.interviewer_agent import build_interviewer_agent_payload
 from app.report import dump_end_snapshot
 from app.roles import is_allowed_role, list_roles
@@ -731,13 +735,16 @@ async def submit_code(
     """Store a hand-written solution and continue the interview as a normal turn."""
 
     _enforce_write_rate_limit(request)
-    exercise = get_exercise(payload.exercise_id)
-    if exercise is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="题库无此题")
     session = _require_live_session(
         await asyncio.to_thread(get_session, session_id),
         session_id,
     )
+    exercise = get_exercise(payload.exercise_id)
+    if exercise is None:
+        turns = await asyncio.to_thread(list_turns, session_id)
+        exercise = exercise_from_opened_turns(turns, payload.exercise_id)
+    if exercise is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="题库无此题")
     return _stream_run_turn(
         session_id=session_id,
         session=session,
