@@ -33,6 +33,17 @@ function createTextElement(tagName, className, text) {
   return element;
 }
 
+function createLoadingState(text) {
+  const loading = document.createElement("div");
+  loading.className = "loading-state";
+  loading.setAttribute("role", "status");
+  const spinner = document.createElement("span");
+  spinner.className = "spinner";
+  spinner.setAttribute("aria-hidden", "true");
+  loading.append(spinner, document.createTextNode(text));
+  return loading;
+}
+
 function safeSourceUrl(rawUrl) {
   try {
     const url = new URL(rawUrl);
@@ -131,14 +142,7 @@ function setSessionLoading(isLoading) {
     });
 
   if (isLoading) {
-    const loading = document.createElement("div");
-    loading.className = "loading-state";
-    loading.setAttribute("role", "status");
-    const spinner = document.createElement("span");
-    spinner.className = "spinner";
-    spinner.setAttribute("aria-hidden", "true");
-    loading.append(spinner, document.createTextNode("正在确定方向并准备代码仓库"));
-    sessionStatus.replaceChildren(loading);
+    sessionStatus.replaceChildren(createLoadingState("正在确定方向并准备代码仓库"));
   }
 }
 
@@ -245,14 +249,7 @@ function setTurnLoading(isLoading) {
     return;
   }
   if (isLoading) {
-    const loading = document.createElement("div");
-    loading.className = "loading-state";
-    loading.setAttribute("role", "status");
-    const spinner = document.createElement("span");
-    spinner.className = "spinner";
-    spinner.setAttribute("aria-hidden", "true");
-    loading.append(spinner, document.createTextNode("面试官正在思考"));
-    turnStatus.replaceChildren(loading);
+    turnStatus.replaceChildren(createLoadingState("面试官正在思考"));
   } else if (!endingInFlight) {
     turnStatus.replaceChildren();
   }
@@ -622,6 +619,7 @@ async function loadReviews() {
     return;
   }
   reviewsPanel?.classList.remove("has-ended-view");
+  reviewsRoot.replaceChildren(createLoadingState("正在加载复盘"));
   try {
     const response = await fetch("/api/reviews", {
       headers: { Accept: "application/json" },
@@ -666,6 +664,7 @@ async function openReview(reviewId) {
   if (!reviewsRoot) {
     return;
   }
+  reviewsRoot.replaceChildren(createLoadingState("正在打开复盘"));
   try {
     const snapshot = await fetchSnapshot(reviewId);
     const wrap = document.createElement("div");
@@ -715,14 +714,7 @@ function setEndLoading(isLoading) {
     return;
   }
   if (isLoading) {
-    const loading = document.createElement("div");
-    loading.className = "loading-state";
-    loading.setAttribute("role", "status");
-    const spinner = document.createElement("span");
-    spinner.className = "spinner";
-    spinner.setAttribute("aria-hidden", "true");
-    loading.append(spinner, document.createTextNode("正在生成结束报告"));
-    turnStatus.replaceChildren(loading);
+    turnStatus.replaceChildren(createLoadingState("正在生成结束报告"));
   } else {
     turnStatus.replaceChildren();
   }
