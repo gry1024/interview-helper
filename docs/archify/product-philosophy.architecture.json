@@ -1,0 +1,262 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Interview Helper 产品理念",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "product-philosophy.architecture.html",
+    "viewBox": [1280, 820],
+    "views": [
+      {
+        "id": "ownership-path",
+        "label": "真正拥有",
+        "focus": ["candidate", "project", "interviewer", "feedback", "owned"],
+        "note": "宗旨主线：带着这一个项目被骨干深挖，拿到正确反馈，真正据为己有。"
+      },
+      {
+        "id": "moat",
+        "label": "数据护城河",
+        "focus": ["knowledge", "persona", "interviewer"],
+        "note": "区分性不来自更大模型，来自真实 JD + 面经总结出的骨干人设。"
+      },
+      {
+        "id": "constrained-dig",
+        "label": "约束深挖",
+        "focus": ["lock", "interviewer", "tools", "project"],
+        "note": "开场锁方向；按需检索原问、用仓库当镜子、话题内手撕。"
+      },
+      {
+        "id": "teacher-side",
+        "label": "老师旁路",
+        "focus": ["candidate", "teacher", "feedback"],
+        "note": "卡住可拿小抄，不占一轮、不代答；结束会计入求助，不能靠小抄抬成真懂。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "candidate",
+      "type": "external",
+      "label": "求职者",
+      "sublabel": "本科 · 大模型岗",
+      "tag": "只有项目",
+      "pos": [40, 320],
+      "size": [140, 68]
+    },
+    {
+      "id": "project",
+      "type": "frontend",
+      "label": "这一个项目",
+      "sublabel": "陈述 + 仓库",
+      "tag": "不收整份简历",
+      "pos": [260, 320],
+      "size": [150, 68]
+    },
+    {
+      "id": "interviewer",
+      "type": "backend",
+      "label": "骨干面试官",
+      "sublabel": "单项目深挖",
+      "tag": "不是通用助手",
+      "pos": [520, 320],
+      "size": [160, 68]
+    },
+    {
+      "id": "feedback",
+      "type": "cloud",
+      "label": "高质量反馈",
+      "sublabel": "正确梯度",
+      "tag": "结束才给",
+      "pos": [780, 320],
+      "size": [150, 68]
+    },
+    {
+      "id": "owned",
+      "type": "external",
+      "label": "真正拥有",
+      "sublabel": "理解 · 差距 · 改法",
+      "tag": "产品宗旨",
+      "pos": [1020, 320],
+      "size": [150, 68]
+    },
+    {
+      "id": "knowledge",
+      "type": "database",
+      "label": "岗位知识库",
+      "sublabel": "真实 JD · 面经",
+      "tag": "护城河",
+      "pos": [260, 80],
+      "size": [150, 68]
+    },
+    {
+      "id": "persona",
+      "type": "security",
+      "label": "骨干人设",
+      "sublabel": "岗位本质",
+      "tag": "禁止编造",
+      "pos": [520, 80],
+      "size": [160, 68]
+    },
+    {
+      "id": "tools",
+      "type": "backend",
+      "label": "按需三件",
+      "sublabel": "原问 · 镜子 · 手撕",
+      "tag": "贴话题",
+      "pos": [260, 540],
+      "size": [150, 68]
+    },
+    {
+      "id": "lock",
+      "type": "messagebus",
+      "label": "方向锁定",
+      "sublabel": "开场宪法",
+      "tag": "不发明主线",
+      "pos": [520, 540],
+      "size": [160, 68]
+    },
+    {
+      "id": "teacher",
+      "type": "backend",
+      "label": "老师小抄",
+      "sublabel": "当前问旁路",
+      "tag": "不抬档",
+      "pos": [780, 540],
+      "size": [150, 68]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "刻意收窄：大模型岗 · 单项目深挖",
+      "wraps": ["project", "interviewer", "knowledge", "persona", "lock", "tools", "teacher", "feedback"],
+      "pad": 24
+    }
+  ],
+  "connections": [
+    {
+      "id": "candidate-project",
+      "from": "candidate",
+      "to": "project",
+      "label": "带着项目来",
+      "variant": "emphasis",
+      "labelDy": -36
+    },
+    {
+      "id": "project-interviewer",
+      "from": "project",
+      "to": "interviewer",
+      "label": "只面这一场",
+      "variant": "emphasis",
+      "labelDy": -36
+    },
+    {
+      "id": "interviewer-feedback",
+      "from": "interviewer",
+      "to": "feedback",
+      "label": "挖到不能再挖",
+      "variant": "emphasis",
+      "labelDy": -36
+    },
+    {
+      "id": "feedback-owned",
+      "from": "feedback",
+      "to": "owned",
+      "label": "更新理解与表达",
+      "variant": "emphasis",
+      "labelDy": -36
+    },
+    {
+      "id": "knowledge-persona",
+      "from": "knowledge",
+      "to": "persona",
+      "label": "问什么 / 怎么追",
+      "labelDy": -32
+    },
+    {
+      "id": "persona-interviewer",
+      "from": "persona",
+      "to": "interviewer",
+      "label": "写成骨干",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 28
+    },
+    {
+      "id": "interviewer-lock",
+      "from": "interviewer",
+      "to": "lock",
+      "label": "定方向贯穿整场",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelAt": [648, 430]
+    },
+    {
+      "id": "interviewer-tools",
+      "from": "interviewer",
+      "to": "tools",
+      "label": "按需调用",
+      "fromSide": "left",
+      "toSide": "top",
+      "labelDy": -28
+    },
+    {
+      "id": "tools-project",
+      "from": "tools",
+      "to": "project",
+      "label": "仓库是镜子",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelDx": -56
+    },
+    {
+      "id": "candidate-teacher",
+      "from": "candidate",
+      "to": "teacher",
+      "label": "卡住求助",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "bottom",
+      "via": [[110, 680], [855, 680]]
+    },
+    {
+      "id": "teacher-feedback",
+      "from": "teacher",
+      "to": "feedback",
+      "label": "计入求助次数",
+      "variant": "dashed",
+      "fromSide": "top",
+      "toSide": "bottom",
+      "labelDx": 56
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "打法三件套",
+      "items": [
+        "数据是根本：别人没有的岗位知识库，不是更大基座",
+        "过程有约束：方向锁定，同一话题挖到不能再挖",
+        "按需工具：改写原问、核对代码事实、面经题库内手撕"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "面试本质",
+      "items": [
+        "合适的人 match 合适的岗位；价值在高质量反馈",
+        "对面应是懂训练、懂业务的技术骨干，不是通用 GPT"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "刻意不做",
+      "items": [
+        "不做整份简历优化、全岗位通用面试官、八股笔试",
+        "不做 LeetCode 刷题、多项目/实习拷问；量化要重采知识库"
+      ]
+    }
+  ]
+}

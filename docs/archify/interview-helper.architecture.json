@@ -1,0 +1,272 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "Interview Helper 运行时架构",
+    "locale": "zh-CN",
+    "quality_profile": "showcase",
+    "output": "interview-helper.architecture.html",
+    "viewBox": [1320, 940],
+    "views": [
+      {
+        "id": "interview-path",
+        "label": "主面试路径",
+        "focus": ["candidate", "spa", "api", "interviewer", "minimax"],
+        "note": "从三入口页面经 FastAPI 与面试官 Agent，到 MiniMax 再流式回到浏览器。"
+      },
+      {
+        "id": "tool-loop",
+        "label": "按需工具",
+        "focus": ["interviewer", "tools", "jdlib", "clone"],
+        "note": "出下一问前检索面经库；必要时核对 clone 目录或打开面经手撕题。"
+      },
+      {
+        "id": "teacher-hint",
+        "label": "老师求助",
+        "focus": ["spa", "api", "teacher", "clone"],
+        "note": "求助不占一轮。老师只给当前问小抄，需要时才查仓库。"
+      },
+      {
+        "id": "persist-review",
+        "label": "落盘与复盘",
+        "focus": ["api", "sqlite"],
+        "note": "会话、轮次、求助写入 SQLite；结束后 snapshot 只插不改。"
+      }
+    ]
+  },
+  "components": [
+    {
+      "id": "candidate",
+      "type": "external",
+      "label": "求职者",
+      "sublabel": "Browser",
+      "pos": [48, 320],
+      "size": [128, 68]
+    },
+    {
+      "id": "spa",
+      "type": "frontend",
+      "label": "三入口 SPA",
+      "sublabel": "static/",
+      "tag": "无构建链",
+      "pos": [260, 320],
+      "size": [140, 68]
+    },
+    {
+      "id": "api",
+      "type": "backend",
+      "label": "FastAPI",
+      "sublabel": "路由 / SSE",
+      "brand": "fastapi",
+      "tag": "写接口限流",
+      "pos": [500, 320],
+      "size": [154, 68]
+    },
+    {
+      "id": "interviewer",
+      "type": "backend",
+      "label": "面试官 Agent",
+      "sublabel": "plan / turn / report",
+      "tag": "方向锁定",
+      "pos": [770, 320],
+      "size": [168, 68]
+    },
+    {
+      "id": "minimax",
+      "type": "cloud",
+      "label": "MiniMax",
+      "sublabel": "Chat Completions",
+      "tag": "temperature=0.2",
+      "pos": [1060, 320],
+      "size": [168, 68]
+    },
+    {
+      "id": "teacher",
+      "type": "backend",
+      "label": "老师 Agent",
+      "sublabel": "当前问小抄",
+      "tag": "不占一轮",
+      "pos": [770, 72],
+      "size": [168, 68]
+    },
+    {
+      "id": "github",
+      "type": "external",
+      "label": "GitHub",
+      "sublabel": "HTTPS 白名单",
+      "brand": "github",
+      "pos": [48, 760],
+      "size": [128, 68]
+    },
+    {
+      "id": "clone",
+      "type": "security",
+      "label": "Clone 沙箱",
+      "sublabel": "repos/{session_id}",
+      "tag": "depth 1",
+      "pos": [260, 760],
+      "size": [140, 68]
+    },
+    {
+      "id": "sqlite",
+      "type": "database",
+      "label": "SQLite",
+      "sublabel": "data/app.db",
+      "brand": "sqlite",
+      "tag": "会话 / 复盘",
+      "pos": [500, 540],
+      "size": [154, 68]
+    },
+    {
+      "id": "tools",
+      "type": "backend",
+      "label": "Agent Tools",
+      "sublabel": "三个 function",
+      "tag": "按需调用",
+      "pos": [770, 540],
+      "size": [168, 68]
+    },
+    {
+      "id": "jdlib",
+      "type": "database",
+      "label": "岗位知识库",
+      "sublabel": "JD · 面经 · 手撕",
+      "tag": "禁止编造",
+      "pos": [1060, 540],
+      "size": [168, 68]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "Interview Helper 进程",
+      "wraps": ["spa", "api", "interviewer", "teacher", "tools", "sqlite", "jdlib", "clone"],
+      "pad": 22
+    },
+    {
+      "kind": "security-group",
+      "label": "clone 根目录锁定",
+      "wraps": ["clone"],
+      "pad": 14
+    }
+  ],
+  "connections": [
+    {
+      "id": "candidate-spa",
+      "from": "candidate",
+      "to": "spa",
+      "label": "HTTPS",
+      "variant": "emphasis",
+      "labelDy": -36
+    },
+    {
+      "id": "spa-api",
+      "from": "spa",
+      "to": "api",
+      "label": "REST / SSE",
+      "variant": "emphasis",
+      "labelDy": -36
+    },
+    {
+      "id": "api-interviewer",
+      "from": "api",
+      "to": "interviewer",
+      "label": "plan / turn / end",
+      "variant": "emphasis",
+      "labelDy": 48
+    },
+    {
+      "id": "interviewer-minimax",
+      "from": "interviewer",
+      "to": "minimax",
+      "label": "Chat Completions",
+      "variant": "emphasis",
+      "labelDy": -40
+    },
+    {
+      "id": "api-teacher",
+      "from": "api",
+      "to": "teacher",
+      "label": "POST /hints",
+      "fromSide": "top",
+      "toSide": "left"
+    },
+    {
+      "id": "teacher-minimax",
+      "from": "teacher",
+      "to": "minimax",
+      "label": "Chat Completions",
+      "variant": "dashed",
+      "fromSide": "right",
+      "toSide": "top"
+    },
+    {
+      "id": "interviewer-tools",
+      "from": "interviewer",
+      "to": "tools",
+      "label": "tool_calls",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 28
+    },
+    {
+      "id": "tools-jdlib",
+      "from": "tools",
+      "to": "jdlib",
+      "label": "BM25 / 题库",
+      "labelDy": -28
+    },
+    {
+      "id": "tools-clone",
+      "from": "tools",
+      "to": "clone",
+      "label": "code_inspect",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "via": [[854, 680], [330, 680]]
+    },
+    {
+      "id": "api-sqlite",
+      "from": "api",
+      "to": "sqlite",
+      "label": "sessions / reviews",
+      "fromSide": "bottom",
+      "toSide": "top",
+      "labelDy": 28
+    },
+    {
+      "id": "github-clone",
+      "from": "github",
+      "to": "clone",
+      "label": "HTTPS 浅 clone",
+      "variant": "dashed",
+      "labelDy": 40
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "开场",
+      "items": [
+        "并行浅 clone 与定方向，仓库不进规划上下文",
+        "clone 失败不挡开面，code_inspect 暂不可用"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "面中",
+      "items": [
+        "每答后思考：search_library 改写原问，必要时核对仓库或出手撕",
+        "方向锁定贯穿整场；老师小抄不占一轮、不代答"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "结束与边界",
+      "items": [
+        "点结束才出四段报告；复盘只读 snapshot，只插不改",
+        "仅 github.com HTTPS；inspect 根目录锁定；无登录，session id 即身份"
+      ]
+    }
+  ]
+}
