@@ -17,6 +17,7 @@ from app.tools.code_exercise import (
     match_exercise,
     match_implementation_exercise,
     resolve_exercise,
+    successful_opened_exercise_ids,
     used_exercise_ids,
 )
 
@@ -52,6 +53,9 @@ def test_catalog_lists_ids_without_inventing() -> None:
     assert "mha-forward" in catalog
     assert "rope-apply" in catalog
     assert "禁止编题" in catalog
+    one = catalog_for_prompt("mha-forward")
+    assert "mha-forward" in one
+    assert "rope-apply" not in one
 
 
 def test_resolve_by_id_and_topic() -> None:
@@ -118,6 +122,27 @@ def test_used_exercise_ids_from_turn_meta() -> None:
         },
     ]
     assert used_exercise_ids(turns) == {"mha-forward", "rope-apply"}
+    assert successful_opened_exercise_ids(turns) == {"rope-apply"}
+    with_payload = [
+        {
+            "role": "thought",
+            "meta": [
+                {
+                    "name": "code_exercise",
+                    "args": {"exercise_id": "mha-forward"},
+                    "exercise_id": "mha-forward",
+                    "result": "已打开《手撕 Multi-Head Attention》",
+                    "payload": {
+                        "exercise_id": "mha-forward",
+                        "title": "手撕 Multi-Head Attention",
+                        "prompt": "写出前向",
+                        "starter": "pass\n",
+                    },
+                }
+            ],
+        }
+    ]
+    assert successful_opened_exercise_ids(with_payload) == {"mha-forward"}
 
 
 def test_get_exercise_returns_none_for_unknown() -> None:

@@ -28,11 +28,10 @@ CODE_EXERCISE_TOOL: dict[str, object] = {
     "function": {
         "name": "code_exercise",
         "description": (
-            "聊到面经里提到的具体实现（RoPE、MHA、RMSNorm、KV Cache、LoRA 等）"
-            "时必须打开手撕，不要只口头连问细节。"
+            "学生有效回答满 5 轮后，且本场成功出题未满 2 次时，才打开面经相关手撕。"
             "必须带 exercise_id 或 topic。先查加速题库，没有命中再按面经原问出题。"
-            "禁止自拟新考点或出链表/排序/背包。没有相关面经就继续口头问。"
-            "同一场同一题不重复，一轮最多一题。题已打开或已交过就不要再调。"
+            "禁止自拟新考点或出链表/排序/背包。匹配失败就继续口头问，不要假装已打开。"
+            "同一场同一题不重复，整场最多 2 次，一轮最多一题。题已打开或已交过就不要再调。"
         ),
         "parameters": {
             "type": "object",
@@ -195,12 +194,52 @@ def _remember_exercise(exercise: CodeExercise) -> CodeExercise:
     return exercise
 
 
-def catalog_for_prompt() -> str:
+def catalog_for_prompt(exercise_id: str | None = None) -> str:
     lines = ["可调用手撕（题库作索引；面经里提到的相关手撕才出，禁止编题）："]
     for exercise in load_exercises():
+        if exercise_id and exercise.id != exercise_id:
+            continue
         topics = "、".join(exercise.topics)
         lines.append(f"- {exercise.id}：{exercise.title}（{topics}）")
+    if exercise_id and len(lines) == 1:
+        return ""
     return "\n".join(lines)
+
+
+def successful_opened_exercise_ids(turns: list[dict[str, Any]] | None) -> set[str]:
+    """Count only opens that actually produced a starter/prompt payload."""
+
+    used: set[str] = set()
+    for turn in turns or []:
+        meta = turn.get("meta")
+        items: list[Any]
+        if isinstance(meta, dict):
+            items = [meta]
+        elif isinstance(meta, list):
+            items = meta
+        else:
+            continue
+        for item in items:
+            if not isinstance(item, Mapping):
+                continue
+            if item.get("kind") == "code_submission" and item.get("exercise_id"):
+                used.add(str(item["exercise_id"]))
+                continue
+            if item.get("name") != "code_exercise":
+                continue
+            payload = item.get("payload") if isinstance(item.get("payload"), Mapping) else {}
+            starter = str(payload.get("starter") or "")
+            prompt = str(payload.get("prompt") or "")
+            title = str(payload.get("title") or "")
+            if not starter or not prompt or not title:
+                continue
+            candidate = (
+                payload.get("exercise_id")
+                or item.get("exercise_id")
+            )
+            if candidate:
+                used.add(str(candidate))
+    return used
 
 
 def used_exercise_ids(turns: list[dict[str, Any]] | None) -> set[str]:
