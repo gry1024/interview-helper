@@ -52,14 +52,17 @@ def test_topic_query_uses_last_question_not_process_talk() -> None:
     assert "继续问" not in query
 
 
-def test_search_hit_count_is_not_padded_to_five() -> None:
+def test_search_hit_count_caps_at_five() -> None:
+    from app.tools.search_library import MAX_HITS
+
+    assert MAX_HITS == 5
     rope = search_library("RoPE 外推", kind="interview")
     kv = search_library("KV cache", kind="interview")
-    assert 1 <= len(rope.hits) <= 10
-    assert 1 <= len(kv.hits) <= 10
+    assert 0 <= len(rope.hits) <= 5
+    assert 0 <= len(kv.hits) <= 5
     weak = search_library("token ID hidden state", kind="interview")
     assert weak.ok
-    assert len(weak.hits) <= 10
+    assert len(weak.hits) <= 5
 
 
 def test_process_talk_does_not_return_padded_hits() -> None:

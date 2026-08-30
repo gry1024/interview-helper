@@ -17,9 +17,10 @@ from typing import Any, Mapping
 
 
 JD_DIR = Path(__file__).resolve().parent.parent / "jd"
-MAX_HITS = 10
+MAX_HITS = 5
 MIN_HIT_SCORE = 8.0
-SNIPPET_CHARS = 220
+SNIPPET_CHARS = 120
+FOR_MODEL_SNIPPET_CHARS = 100
 ERROR_EMPTY_QUERY = "检索词为空。"
 PROCESS_QUERY = re.compile(
     r"(请)?(继续问|继续吧|往下问|下一问|换个?(话题|方向|问题)|换话题|好的|嗯嗯?|然后呢)"
@@ -42,7 +43,7 @@ SEARCH_LIBRARY_TOOL: dict[str, object] = {
             "按当前话题检索 JD/面经库，用相关原问改写下一问。"
             "query 必须是当前技术话题（RoPE、LoRA 秩、KV cache），"
             "不要用「请继续问吧 / 换个话题 / 好的」当检索词。"
-            "相关就返回，条数不固定；没有相关原问就空着，不要凑条数。"
+            "每轮由服务端强制检索，最多返回 5 条短摘录；模型不要再调用本工具。"
         ),
         "parameters": {
             "type": "object",
@@ -97,15 +98,19 @@ class LibrarySearchResult:
     def for_model(self) -> str:
         if self.error:
             return f"检索面经失败：{self.error}"
-        if not self.hits:
+        hits = self.hits[:MAX_HITS]
+        if not hits:
             return f"检索「{self.query}」没有命中。不要编一串大题，只问当前方向的下一个微步骤。"
-        lines = [f"检索「{self.query}」命中 {len(self.hits)} 条原文（按相关度）："]
-        for index, hit in enumerate(self.hits, start=1):
+        lines = [f"检索「{self.query}」命中 {len(hits)} 条原文（最多 5 条）："]
+        for index, hit in enumerate(hits, start=1):
+            snippet = hit.snippet[:FOR_MODEL_SNIPPET_CHARS]
+            if len(hit.snippet) > FOR_MODEL_SNIPPET_CHARS:
+                snippet = snippet.rstrip() + "…"
             lines.append(
                 f"{index}. [{hit.sample_id}] {hit.company}/{hit.role} · {hit.source_name}："
-                f"{hit.snippet}"
+                f"{snippet}"
             )
-        lines.append("下一问只选其中一件事来问，保留原问的具体点，不要合并成清单。")
+        lines.append("下一问只选其中一件事来问，保留原问的具体点，不要合并成清单。不要再检索。")
         return "\n".join(lines)
 
     def for_public(self) -> str:
@@ -364,7 +369,8 @@ def search_library(
             )
         )
     scored.sort(key=lambda item: item.score, reverse=True)
-    strong = [hit for hit in scored if hit.score >= MIN_HIT_SCORE][: max(0, limit)]
+    cap = min(max(0, limit), MAX_HITS)
+    strong = [hit for hit in scored if hit.score >= MIN_HIT_SCORE][:cap]
     return LibrarySearchResult(ok=True, query=cleaned, hits=strong)
 
 
