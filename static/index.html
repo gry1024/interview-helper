@@ -11,9 +11,9 @@
       href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@300;400;500;600&display=swap"
       rel="stylesheet"
     >
-    <link rel="stylesheet" href="/styles.css?v=7">
+    <link rel="stylesheet" href="/styles.css?v=8">
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
-    <script src="/app.js?v=7" defer></script>
+    <script src="/app.js?v=8" defer></script>
   </head>
   <body>
     <div class="app-shell">
@@ -60,7 +60,7 @@
             data-panel="jds"
             tabindex="-1"
           >
-            JD 库
+            JD/面经库
           </button>
         </nav>
 
@@ -95,8 +95,12 @@
                   autocomplete="url"
                   maxlength="512"
                   placeholder="https://github.com/owner/repository"
+                  aria-describedby="github-hint"
                   required
                 >
+                <p class="field-hint" id="github-hint">
+                  这是你项目对应的代码 GitHub 仓库。面试官按需核对陈述是否与代码相符，不会把整仓灌进上下文。
+                </p>
               </label>
 
               <label class="field">
@@ -185,9 +189,35 @@
           tabindex="0"
           hidden
         >
-          <p class="eyebrow">JD 库</p>
+          <p class="eyebrow">JD/面经库</p>
           <h1>岗位本质，来自真实招聘与真实面试。</h1>
-          <p class="lead">这里只展示有可核对来源的 JD 与面经，不生成、不编造。</p>
+          <p class="lead">先选 JD 或面经，再点开卡片看详情。这里只收录有可核对来源的真实样本，不生成、不编造。</p>
+          <div
+            class="library-kind-switch"
+            role="tablist"
+            aria-label="选择 JD 或面经"
+          >
+            <button
+              class="kind-btn active"
+              id="kind-jd"
+              type="button"
+              role="tab"
+              aria-selected="true"
+              data-kind="jd"
+            >
+              JD
+            </button>
+            <button
+              class="kind-btn"
+              id="kind-interview"
+              type="button"
+              role="tab"
+              aria-selected="false"
+              data-kind="interview"
+            >
+              面经
+            </button>
+          </div>
           <div class="sample-library" id="sample-library" aria-live="polite">
             <div class="loading-state" role="status">
               <span class="spinner" aria-hidden="true"></span>

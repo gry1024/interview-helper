@@ -70,6 +70,19 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+_GRAD_EDU_FIELD = re.compile(r"硕士|博士|master'?s?\b|ph\.?\s*d\.?", re.I)
+_BACHELOR_FIELD = re.compile(r"本科|学士|bachelor", re.I)
+_GRAD_REQUIRE_TEXT = re.compile(
+    r"硕士及以上|博士及以上|硕士研究生及以上|"
+    r"(?:学历|要求)[^\n。]{0,20}(?:硕士|博士)|"
+    r"(?:仅限|必须|须为)[^\n。]{0,8}(?:硕士|博士)|"
+    r"(?:硕士|博士)[^\n。]{0,8}(?:学历|及以上|起步)|"
+    r"master'?s(?:\s+degree)?\s+(?:or\s+above|and\s+above|required)|"
+    r"ph\.?\s*d\.?\s+(?:or\s+above|required)",
+    re.I,
+)
+
+
 def _load_samples(filename: str) -> list[dict[str, Any]]:
     with (JD_DIR / filename).open(encoding="utf-8") as source_file:
         samples = json.load(source_file)
@@ -81,14 +94,66 @@ def _load_samples(filename: str) -> list[dict[str, Any]]:
     ]
 
 
+def _field_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple)):
+        return " ".join(_field_text(item) for item in value)
+    return str(value)
+
+
+def _sample_kind(sample: dict[str, Any], fallback: str) -> str:
+    kind = str(sample.get("kind") or "").strip().lower()
+    if kind in {"interview", "面经"}:
+        return "interview"
+    if kind in {"jd", "job"}:
+        return "jd"
+    return fallback
+
+
+def is_graduate_targeted(sample: dict[str, Any]) -> bool:
+    """True when a sample is aimed at 硕士/博士, not 本科生."""
+
+    education = _field_text(sample.get("education")).strip()
+    if education and _GRAD_EDU_FIELD.search(education):
+        if _BACHELOR_FIELD.search(education) and not re.search(
+            r"硕士及以上|仅限硕士|仅限博士|博士",
+            education,
+        ):
+            return False
+        return True
+
+    blob = "\n".join(
+        [
+            education,
+            _field_text(sample.get("requirements")),
+            _field_text(sample.get("text")),
+            _field_text(sample.get("experience")),
+        ]
+    )
+    return bool(_GRAD_REQUIRE_TEXT.search(blob))
+
+
+def publish_library() -> dict[str, list[dict[str, Any]]]:
+    """Split by kind and hide graduate-only posts for the undergrad audience."""
+
+    buckets: dict[str, list[dict[str, Any]]] = {"jds": [], "interviews": []}
+    for filename, fallback in (("jds.json", "jd"), ("interviews.json", "interview")):
+        for sample in _load_samples(filename):
+            if is_graduate_targeted(sample):
+                continue
+            if _sample_kind(sample, fallback) == "interview":
+                buckets["interviews"].append(sample)
+            else:
+                buckets["jds"].append(sample)
+    return buckets
+
+
 @app.get("/api/jds")
 def list_job_samples() -> dict[str, list[dict[str, Any]]]:
-    """Return only sourced JD and interview samples."""
+    """Return sourced JD/interview samples filtered for undergraduates."""
 
-    return {
-        "jds": _load_samples("jds.json"),
-        "interviews": _load_samples("interviews.json"),
-    }
+    return publish_library()
 
 
 def _enforce_write_rate_limit(request: Request) -> None:

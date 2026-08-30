@@ -1,5 +1,5 @@
-const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
-const panels = Array.from(document.querySelectorAll('[role="tabpanel"]'));
+const tabs = Array.from(document.querySelectorAll('.sidebar [role="tab"]'));
+const panels = Array.from(document.querySelectorAll(".main-content > [role='tabpanel']"));
 const sampleLibrary = document.querySelector("#sample-library");
 const sessionForm = document.querySelector("#session-form");
 const sessionStatus = document.querySelector("#session-status");
@@ -23,8 +23,24 @@ const ROLE_LABELS = {
 };
 let libraryLoaded = false;
 let libraryLoading = false;
+let libraryCache = null;
+let libraryKind = "jd";
 let turnInFlight = false;
 let endingInFlight = false;
+const REPORT_SECTIONS = [
+  { key: "overview", label: "总评", aliases: ["总评", "综合评价", "整体评价"] },
+  {
+    key: "essence",
+    label: "岗位本质",
+    aliases: ["岗位本质对照", "岗位本质", "本质对照"],
+  },
+  { key: "knowledge", label: "知识建议", aliases: ["知识建议", "知识补习"] },
+  {
+    key: "improve",
+    label: "项目改良",
+    aliases: ["项目改良", "最小改造", "项目改造", "改造建议"],
+  },
+];
 
 function createTextElement(tagName, className, text) {
   const element = document.createElement(tagName);
@@ -53,47 +69,213 @@ function safeSourceUrl(rawUrl) {
   }
 }
 
-function renderSample(sample) {
-  const sourceUrl = safeSourceUrl(sample.source_url);
-  if (!sourceUrl || !sample.source_name) {
-    return null;
+function fieldText(value) {
+  if (value == null || value === "") {
+    return "";
   }
-
-  const article = document.createElement("article");
-  article.className = "sample-item";
-  article.append(createTextElement("p", "sample-company", sample.company));
-
-  const heading = document.createElement("div");
-  heading.className = "sample-heading";
-  heading.append(createTextElement("h3", "", sample.role));
-
-  const sourceLink = createTextElement(
-    "a",
-    "source-link",
-    `查看来源 · ${sample.source_name}`,
-  );
-  sourceLink.href = sourceUrl;
-  sourceLink.target = "_blank";
-  sourceLink.rel = "noopener noreferrer";
-  heading.append(sourceLink);
-
-  article.append(heading);
-  article.append(createTextElement("p", "sample-text", sample.text));
-  return article;
+  if (Array.isArray(value)) {
+    return value.map(fieldText).filter(Boolean).join("、");
+  }
+  return String(value);
 }
 
-function renderSampleGroup(title, samples) {
-  const section = document.createElement("section");
-  section.className = "library-section";
-  section.append(createTextElement("h2", "library-title", title));
+function displayOrNone(value) {
+  return fieldText(value).trim() || "暂无";
+}
 
-  const sourcedSamples = samples.map(renderSample).filter(Boolean);
-  if (sourcedSamples.length === 0) {
-    section.append(createTextElement("p", "empty-state", "暂无可核验样本"));
-  } else {
-    section.append(...sourcedSamples);
+function isGraduateTargeted(sample) {
+  const education = fieldText(sample.education).trim();
+  const masterPhd = /硕士|博士|master'?s?\b|ph\.?\s*d\.?/i;
+  const bachelor = /本科|学士|bachelor/i;
+  if (education && masterPhd.test(education)) {
+    if (
+      bachelor.test(education) &&
+      !/硕士及以上|仅限硕士|仅限博士|博士/.test(education)
+    ) {
+      return false;
+    }
+    return true;
   }
-  return section;
+  const blob = [
+    education,
+    fieldText(sample.requirements),
+    fieldText(sample.text),
+    fieldText(sample.experience),
+  ].join("\n");
+  return /硕士及以上|博士及以上|(?:学历|要求)[^\n。]{0,20}(?:硕士|博士)|(?:仅限|必须|须为)[^\n。]{0,8}(?:硕士|博士)|(?:硕士|博士)[^\n。]{0,8}(?:学历|及以上|起步)|master'?s(?:\s+degree)?\s+(?:or\s+above|and\s+above|required)|ph\.?\s*d\.?\s+(?:or\s+above|required)/i.test(
+    blob,
+  );
+}
+
+function kindOfSample(sample, fallback) {
+  const kind = String(sample.kind || "").trim().toLowerCase();
+  if (kind === "interview" || kind === "面经") {
+    return "interview";
+  }
+  if (kind === "jd" || kind === "job") {
+    return "jd";
+  }
+  return fallback;
+}
+
+function partitionLibrary(data) {
+  const buckets = { jds: [], interviews: [] };
+  const rows = [
+    ...(data.jds || []).map((sample) => ({ sample, fallback: "jd" })),
+    ...(data.interviews || []).map((sample) => ({
+      sample,
+      fallback: "interview",
+    })),
+  ];
+  for (const { sample, fallback } of rows) {
+    if (!safeSourceUrl(sample.source_url) || !sample.source_name) {
+      continue;
+    }
+    if (isGraduateTargeted(sample)) {
+      continue;
+    }
+    if (kindOfSample(sample, fallback) === "interview") {
+      buckets.interviews.push(sample);
+    } else {
+      buckets.jds.push(sample);
+    }
+  }
+  return buckets;
+}
+
+function closeLibraryModal() {
+  document.querySelector("#library-modal")?.remove();
+  document.body.classList.remove("modal-open");
+}
+
+function openSampleDetail(sample, kind) {
+  closeLibraryModal();
+  const sourceUrl = safeSourceUrl(sample.source_url);
+  const overlay = document.createElement("div");
+  overlay.id = "library-modal";
+  overlay.className = "modal-overlay";
+  overlay.setAttribute("role", "dialog");
+  overlay.setAttribute("aria-modal", "true");
+  overlay.setAttribute("aria-labelledby", "library-modal-title");
+
+  const card = document.createElement("div");
+  card.className = "modal-card";
+
+  const header = document.createElement("div");
+  header.className = "modal-header";
+  header.append(
+    createTextElement("p", "modal-kicker", sample.company || "未知公司"),
+    createTextElement(
+      "h2",
+      "modal-title",
+      sample.role || (kind === "interview" ? "面经" : "岗位"),
+    ),
+  );
+  header.querySelector("h2").id = "library-modal-title";
+
+  const closeBtn = document.createElement("button");
+  closeBtn.type = "button";
+  closeBtn.className = "btn modal-close";
+  closeBtn.textContent = "关闭";
+  closeBtn.addEventListener("click", closeLibraryModal);
+
+  const body = document.createElement("div");
+  body.className = "modal-body";
+
+  const addField = (label, value) => {
+    body.append(
+      createTextElement("p", "modal-meta-label", label),
+      createTextElement("p", "modal-meta-value", value),
+    );
+  };
+
+  addField("发布日期", displayOrNone(sample.published_at || sample.captured_at));
+  if (kind === "jd") {
+    addField("岗位要求", displayOrNone(sample.requirements));
+  } else {
+    addField("常考题型", displayOrNone(sample.question_types));
+    addField("面试经验", displayOrNone(sample.experience));
+  }
+  addField("原文", displayOrNone(sample.text));
+
+  if (sourceUrl) {
+    const source = document.createElement("a");
+    source.className = "source-link";
+    source.href = sourceUrl;
+    source.target = "_blank";
+    source.rel = "noopener noreferrer";
+    source.textContent = `查看来源 · ${sample.source_name}`;
+    body.append(createTextElement("p", "modal-meta-label", "来源链接"), source);
+  } else {
+    addField("来源链接", "暂无");
+  }
+
+  card.append(closeBtn, header, body);
+  overlay.append(card);
+  overlay.addEventListener("click", (event) => {
+    if (event.target === overlay) {
+      closeLibraryModal();
+    }
+  });
+  document.body.append(overlay);
+  document.body.classList.add("modal-open");
+  closeBtn.focus();
+}
+
+function renderLibraryCard(sample, kind) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "library-card";
+  button.append(
+    createTextElement("span", "library-card-company", sample.company || "未知公司"),
+    createTextElement("span", "library-card-role", sample.role || "未命名岗位"),
+  );
+  button.addEventListener("click", () => {
+    openSampleDetail(sample, kind);
+  });
+  return button;
+}
+
+function renderLibraryGrid(data) {
+  if (!sampleLibrary) {
+    return;
+  }
+  const samples = libraryKind === "interview" ? data.interviews : data.jds;
+  if (!samples.length) {
+    sampleLibrary.replaceChildren(
+      createTextElement(
+        "p",
+        "empty-state",
+        libraryKind === "interview" ? "暂无可核验面经" : "暂无可核验 JD",
+      ),
+    );
+    return;
+  }
+  const grid = document.createElement("div");
+  grid.className = "library-grid";
+  grid.setAttribute(
+    "aria-label",
+    libraryKind === "interview" ? "面经列表" : "JD 列表",
+  );
+  grid.append(
+    ...samples.map((sample) => renderLibraryCard(sample, libraryKind)),
+  );
+  sampleLibrary.replaceChildren(grid);
+}
+
+function setLibraryKind(nextKind) {
+  libraryKind = nextKind === "interview" ? "interview" : "jd";
+  document.querySelectorAll(".kind-btn").forEach((button) => {
+    const isActive = button.dataset.kind === libraryKind;
+    button.classList.toggle("active", isActive);
+    button.setAttribute("aria-selected", String(isActive));
+  });
+  if (libraryCache) {
+    renderLibraryGrid(libraryCache);
+    return;
+  }
+  libraryLoading = false;
+  void loadSampleLibrary();
 }
 
 async function loadSampleLibrary() {
@@ -102,6 +284,7 @@ async function loadSampleLibrary() {
   }
 
   libraryLoading = true;
+  sampleLibrary.replaceChildren(createLoadingState("正在加载真实样本"));
   try {
     const response = await fetch("/api/jds", {
       headers: { Accept: "application/json" },
@@ -115,13 +298,13 @@ async function loadSampleLibrary() {
       throw new Error("样本数据格式错误");
     }
 
-    sampleLibrary.replaceChildren(
-      renderSampleGroup("真实 JD", data.jds),
-      renderSampleGroup("真实面经", data.interviews),
-    );
+    libraryCache = partitionLibrary(data);
     libraryLoaded = true;
+    renderLibraryGrid(libraryCache);
   } catch (error) {
     console.error("Failed to load sourced samples", error);
+    libraryLoaded = false;
+    libraryCache = null;
     sampleLibrary.replaceChildren(
       createTextElement("p", "flash error", "真实样本加载失败，请稍后重试。"),
     );
@@ -514,6 +697,124 @@ function renderMarkdown(text) {
   return withBold;
 }
 
+function normalizeReportHeading(line) {
+  return line
+    .replace(/^#{1,6}\s*/, "")
+    .replace(/^\*{1,2}\s*|\s*\*{1,2}$/g, "")
+    .replace(/^[（(]?[一二三四1-4][）)、.\s]+/, "")
+    .replace(/[：:]\s*$/, "")
+    .replace(/[【】\[\]]/g, "")
+    .trim();
+}
+
+function matchReportSection(line) {
+  const heading = normalizeReportHeading(line);
+  if (!heading || heading.length > 24) {
+    return null;
+  }
+  for (const section of REPORT_SECTIONS) {
+    for (const alias of section.aliases) {
+      if (heading === alias || heading.endsWith(alias) || heading.startsWith(alias)) {
+        return section.key;
+      }
+    }
+  }
+  return null;
+}
+
+function splitReportSections(text) {
+  const result = {
+    overview: "",
+    essence: "",
+    knowledge: "",
+    improve: "",
+  };
+  const raw = String(text || "").replace(/\r\n/g, "\n").trim();
+  if (!raw) {
+    return result;
+  }
+
+  const buckets = {
+    overview: [],
+    essence: [],
+    knowledge: [],
+    improve: [],
+  };
+  const preamble = [];
+  let current = null;
+
+  for (const line of raw.split("\n")) {
+    const key = matchReportSection(line.trim());
+    if (key) {
+      current = key;
+      continue;
+    }
+    if (current) {
+      buckets[current].push(line);
+    } else {
+      preamble.push(line);
+    }
+  }
+
+  for (const key of Object.keys(buckets)) {
+    result[key] = buckets[key].join("\n").trim();
+  }
+  if (!result.overview && preamble.join("").trim()) {
+    result.overview = preamble.join("\n").trim();
+  }
+  if (!result.overview && !result.essence && !result.knowledge && !result.improve) {
+    result.overview = raw;
+  }
+  return result;
+}
+
+function renderSectionHtml(text) {
+  const trimmed = String(text || "").trim();
+  if (!trimmed) {
+    return "<p>暂无此段内容</p>";
+  }
+  return renderMarkdown(trimmed);
+}
+
+function renderReportTabs(reportText, reportPane) {
+  const sections = splitReportSections(reportText);
+  const tabs = document.createElement("div");
+  tabs.className = "report-tabs";
+  tabs.setAttribute("role", "tablist");
+  tabs.setAttribute("aria-label", "报告段落");
+
+  const body = document.createElement("article");
+  body.className = "report-article report-article-body";
+  body.setAttribute("role", "tabpanel");
+
+  const show = (key) => {
+    tabs.querySelectorAll(".report-tab").forEach((button) => {
+      const isActive = button.dataset.section === key;
+      button.classList.toggle("active", isActive);
+      button.setAttribute("aria-selected", String(isActive));
+    });
+    const section = REPORT_SECTIONS.find((item) => item.key === key);
+    body.setAttribute("aria-label", section ? section.label : "总评");
+    body.innerHTML = renderSectionHtml(sections[key]);
+  };
+
+  for (const section of REPORT_SECTIONS) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "report-tab";
+    button.dataset.section = section.key;
+    button.textContent = section.label;
+    button.setAttribute("role", "tab");
+    button.addEventListener("click", () => {
+      show(section.key);
+    });
+    tabs.append(button);
+  }
+
+  reportPane.replaceChildren(tabs, body);
+  show("overview");
+}
+
 function renderTurnsInto(container, turns) {
   container.replaceChildren();
   let thoughtNode = null;
@@ -544,10 +845,7 @@ function renderEndedView(snapshot, container) {
   const reportPane = document.createElement("div");
   reportPane.className = "ended-pane ended-pane-report";
   reportPane.setAttribute("data-ended-report", "1");
-  const article = document.createElement("article");
-  article.className = "report-article";
-  article.innerHTML = renderMarkdown(snapshot.report?.text || "");
-  reportPane.append(article);
+  renderReportTabs(snapshot.report?.text || "", reportPane);
 
   container.classList.add("ended-view");
   container.replaceChildren(chatPane, divider, reportPane);
@@ -833,4 +1131,14 @@ sessionForm?.addEventListener("submit", submitSession);
 chatForm?.addEventListener("submit", submitTurn);
 endInterviewButton?.addEventListener("click", () => {
   void submitEndInterview();
+});
+document.querySelectorAll(".kind-btn").forEach((button) => {
+  button.addEventListener("click", () => {
+    setLibraryKind(button.dataset.kind);
+  });
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && document.querySelector("#library-modal")) {
+    closeLibraryModal();
+  }
 });
