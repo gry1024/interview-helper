@@ -168,6 +168,40 @@ def test_first_stuck_answer_cannot_finish_a_direction() -> None:
     assert next_id == "d1"
 
 
+def test_run_turn_teaches_on_first_stuck_and_keeps_direction(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.agent.complete_json_with_tools",
+        lambda *_args, **_kwargs: _model_turn(
+            direction_done=True,
+            next_question="预训练和 SFT 之间损失怎么接？",
+        ),
+    )
+    monkeypatch.setattr(
+        "app.agent.run_search_library_from_tool_args",
+        lambda *_args, **_kwargs: _fake_library(2),
+    )
+    stuck = "这个问题不太懂，没有深入思考过，希望交流一下"
+    assert is_stuck_answer(stuck) is True
+    result, next_id, _tools = run_turn(
+        session=_session(),
+        turns=[
+            {
+                "role": "interviewer",
+                "body": "RoPE 具体旋转的是哪一部分？",
+                "direction_id": "d1",
+            }
+        ],
+        answer=stuck,
+    )
+    assert result.direction_done is False
+    assert next_id == "d1"
+    assert "先讲清：" in result.thought
+    assert "建议你" not in result.thought
+    assert "总评" not in result.thought
+    assert "换个更朴素的说法" not in result.next_question
+    assert result.next_question.count("？") + result.next_question.count("?") == 1
+
+
 def test_second_stuck_after_rephrase_may_finish_a_direction() -> None:
     done, next_id = apply_topic_lock(
         directions=DIRECTIONS,

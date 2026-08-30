@@ -95,7 +95,10 @@ def build_interviewer_agent_payload(role: str | None = None) -> dict[str, Any]:
             "id": "min_stuck_before_abandon",
             "value": MIN_STUCK_BEFORE_ABANDON,
             "source": "app/agent.py:MIN_STUCK_BEFORE_ABANDON",
-            "text": f"学生说不懂时，至少换说法 {MIN_STUCK_BEFORE_ABANDON} 次仍空白才允许放弃该方向。",
+            "text": (
+                "学生说不懂时，至少短讲并追问 "
+                f"{MIN_STUCK_BEFORE_ABANDON} 次仍空白才允许放弃该方向。"
+            ),
         },
         {
             "id": "min_interviewer_before_abandon",
@@ -144,7 +147,7 @@ def build_interviewer_agent_payload(role: str | None = None) -> dict[str, Any]:
             "name": "话题锁",
             "source": "app/agent.py:apply_topic_lock 与 interviewer.md",
             "text": (
-                "已定方向是整场宪法。浅答、短答、第一次不懂不得切方向。"
+                "已定方向是整场宪法。浅答、短答、第一次不懂不得切方向；不懂时可以短讲当前步。"
                 f"未满 {MIN_TURNS_BEFORE_GOAL_DONE} 轮或 goal 检查点未覆盖时，"
                 "服务端把 direction_done 改回 false。"
             ),
@@ -156,7 +159,7 @@ def build_interviewer_agent_payload(role: str | None = None) -> dict[str, Any]:
             "text": (
                 "search_library：每轮按当前话题检索，相关才返回，条数不固定。"
                 "code_inspect：核仓库真伪，不把坐标念给学生。"
-                "code_exercise：面经常考实现才打开题库，禁止现场编题。"
+                "code_exercise：面经里提到的相关手撕才打开编辑器，禁止现场编无关算法题。"
             ),
         },
     ]
@@ -184,7 +187,7 @@ def build_interviewer_agent_payload(role: str | None = None) -> dict[str, Any]:
         "when_to_call": {
             "search_library": "每轮按当前话题检索；相关 0～10 条；过程句不当检索词。",
             "code_inspect": "学生吹了仓库可能对不上的能力，或需要核对真伪/决定同方向怎么引。",
-            "code_exercise": "当前话题属于面经常考实现，且要核实会不会写；题只从题库取。",
+            "code_exercise": "当前话题属于面经提到的相关手撕，且要核实会不会写；无相关面经则口头问。",
         },
         "role_label": role_label(selected),
     }

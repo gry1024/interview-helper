@@ -164,7 +164,13 @@ STUCK_MARKERS = (
     "没学过",
     "讲不出来",
     "说不上来",
+    "没有深入思考过",
+    "没深入思考过",
+    "没深入想过",
+    "希望交流",
 )
+STUCK_TEACH_MARK = "先讲清："
+EMPTY_REPHRASE_RE = re.compile(r"换个更朴素的说法|换个说法再问|换个说法：")
 MECHANISM_MARKERS = (
     "因为",
     "所以",
@@ -462,10 +468,49 @@ def _rewrite_direction_open(thought: str, reason: str) -> str:
 def _stay_next_question(direction: dict[str, str], answer: str) -> str:
     title = (direction.get("title") or "当前方向")[:20]
     if is_stuck_answer(answer):
-        text = "刚才这步你还没讲清。换个更朴素的说法，在你项目里这一步实际是怎么做的？"
+        text = "那你项目里这一步实际怎么接？"
     else:
         text = f"还在「{title}」上。请接着上一问，把下一步机制讲具体，不要跳到别的方向？"
     return text[:240]
+
+
+def _should_teach_stuck(
+    answer: str,
+    turns: list[dict[str, Any]] | None,
+    direction_id: str,
+) -> bool:
+    if not is_stuck_answer(answer):
+        return False
+    answers = _user_answers_on_direction(turns, direction_id, answer)
+    return not _can_abandon_stuck(turns, direction_id, answers)
+
+
+def _inject_stuck_teach(
+    thought: str,
+    *,
+    direction: dict[str, str],
+    last_question: str,
+) -> str:
+    if STUCK_TEACH_MARK in (thought or ""):
+        return thought
+    title = (direction.get("title") or "当前方向")[:20]
+    last = re.sub(r"\s+", " ", (last_question or "刚才那一步")).strip()[:48]
+    teach = (
+        f"{STUCK_TEACH_MARK}把「{last}」落到学生项目「{title}」里的对象上，"
+        "只讲当前这一步怎么接，不展开成课。"
+    )
+    lines = (thought or "").splitlines()
+    output: list[str] = []
+    inserted = False
+    for line in lines:
+        if not inserted and line.startswith("评价"):
+            output.append(f"{line.rstrip()} {teach}")
+            inserted = True
+        else:
+            output.append(line)
+    if not inserted:
+        output.insert(0, f"评价：{teach}")
+    return "\n".join(output)
 
 
 CONTRACT_ECHO = re.compile(
@@ -620,10 +665,11 @@ clone 不可用时 tool 会返回仓库不可用，面试继续，不要假装�
 聊到 RoPE / MHA / RMSNorm / KV Cache / LoRA 等具体实现时，必须调用 code_exercise，不要只口头连问细节。
 学生说手撕/打开题/想写，或在对话框里贴了一串代码时，也必须打开编辑器。
 题已打开或学生刚提交后，禁止再调用；next_question 不能空，只问一个微步骤、一个问号。
-普通问答禁止把代码当口答。服务端只从题库取题，同一场同一题不重复，一轮最多一题。
+普通问答禁止把代码当口答。服务端先查加速题库，没有命中再按面经里提到的相关手撕出题；没有相关面经就口头问。同一场同一题不重复，一轮最多一题。禁止编无关算法题。
 {exercise_prompt}
 浅答、短答、只复述术语、第一次说不懂时，direction_done 必须是 false，next_question 必须仍锁在当前方向。
-只有学生明确表示不会/不知道且换说法仍空白，或当前 goal 的检查点都已问到，才允许 direction_done=true。
+学生说不懂、不太懂、没有深入思考过、希望交流时，在 thought 评价段用「先讲清：」短讲当前这一步（用学生项目里的对象，不是上课/总评/建议清单），next_question 只留一个更朴素的问号。不要只换说法空转，不要因此切方向。
+只有学生明确表示不会/不知道且短讲后再完全空白，或当前 goal 的检查点都已问到，才允许 direction_done=true。
 direction_done=true 时，下一问只能是下一条已定方向的第一步；没有下一条就收束，禁止发明 d6 或任何新主线。
 禁止在 next_question 里劝用户结束。
 最终只输出合法 JSON：
@@ -873,7 +919,7 @@ def run_turn(
 {seeded_search.for_model()}
 {exercise_hint}
 
-请只锁在当前方向继续深挖。答得差也只换更朴素的说法，不要跳方向，不要发明新方向，不要给建议或总评，不要劝结束。
+请只锁在当前方向继续深挖。答得差也不要跳方向。学生说不懂时，在评价里用「先讲清：」短讲当前这一步，再问一个更朴素的下一问，不要只换说法空转，不要给建议或总评，不要劝结束。
 下一问只问一件事，必须给出 next_question。
 若回答声称了仓库里可能对不上的实现（例如 rerank、万卡分布式训练），必须先调用 code_inspect 再出下一问。
 学生要手撕或在对话框贴了代码时，必须调用 code_exercise 打开编辑器，不要把代码当口答。
@@ -1022,6 +1068,17 @@ def run_turn(
         result = result.model_copy(
             update={"next_question": _strip_end_advocacy(result.next_question)}
         )
+    if _should_teach_stuck(answer, turns, current_direction_id):
+        updates: dict[str, Any] = {
+            "thought": _inject_stuck_teach(
+                result.thought,
+                direction=current_direction,
+                last_question=_latest_interviewer_question(turns),
+            )
+        }
+        if EMPTY_REPHRASE_RE.search(result.next_question or ""):
+            updates["next_question"] = _stay_next_question(current_direction, answer)
+        result = result.model_copy(update=updates)
     return result, next_direction_id, {"events": tool_events, "meta": tool_meta}
 
 
