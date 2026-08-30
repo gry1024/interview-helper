@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from app import db
 from app import main as main_mod
-from app.agent import run_turn
+from app.agent import requested_code_exercise_args, run_turn
 from app.llm import complete_json_with_tools
 from app.models import TurnResult
 from app.tools.code_exercise import CODE_EXERCISE_TOOL
@@ -215,6 +215,26 @@ def test_run_turn_rejects_invented_exercise_id(monkeypatch) -> None:
     assert event["name"] == "code_exercise"
     assert event.get("payload") is None
     assert "无法打开" in event["result"]
+
+
+def test_run_turn_forces_exercise_when_student_asks_to_write(monkeypatch) -> None:
+    completions = _FakeCompletions(
+        [_FakeResponse(_FakeMessage(content=json.dumps(_legal_turn_json())))]
+    )
+    _install_client(monkeypatch, completions)
+
+    result, next_id, tools = run_turn(
+        session=_session(),
+        turns=[{"role": "interviewer", "body": "RoPE 加在哪？", "direction_id": "d1"}],
+        answer="RoPE 旋 Q/K。请打开手撕题，让我手写 apply_rope。",
+    )
+    assert next_id == "d1"
+    assert result.direction_done is False
+    assert requested_code_exercise_args(answer="请打开手撕题") is not None
+    event = tools["events"][0]
+    assert event["name"] == "code_exercise"
+    assert event["payload"]["exercise_id"] == "rope-apply"
+    assert "已打开手撕题" in event["result"]
 
 
 def test_run_turn_submission_does_not_offer_exercise_tool(monkeypatch) -> None:

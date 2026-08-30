@@ -360,6 +360,24 @@ def apply_topic_lock(
     return _advance_direction(directions, current_direction_id)
 
 
+WRITE_REQUEST_MARKERS = (
+    "手撕",
+    "手写",
+    "打开手撕",
+    "code_exercise",
+    "请打开题",
+    "请出题",
+)
+
+
+def requested_code_exercise_args(answer: str) -> dict[str, str] | None:
+    """If the student asks to write a sourced implementation, force-open the bank."""
+
+    if not any(marker in answer for marker in WRITE_REQUEST_MARKERS):
+        return None
+    return {"topic": answer}
+
+
 def fabricated_inspect_query(answer: str) -> str | None:
     """Return a code_inspect query when the answer names implausible claims."""
 
@@ -622,6 +640,42 @@ direction_done=true 时，下一问只能是下一条已定方向的第一步；
         tool_events.append(
             {"name": "code_inspect", "args": {"query": inspect_query}, "result": public_text}
         )
+
+    if allow_code_exercise and not any(
+        event.get("name") == "code_exercise" and event.get("payload")
+        for event in tool_events
+    ):
+        exercise_args = requested_code_exercise_args(answer)
+        if exercise_args:
+            opened = run_code_exercise_from_tool_args(
+                exercise_args,
+                used_ids=used_exercise_ids(turns),
+                role=session.get("role") or "",
+                direction_text=(
+                    f"{current_direction.get('title', '')} "
+                    f"{current_direction.get('goal', '')}"
+                ),
+            )
+            payload = opened.sse_payload()
+            if payload:
+                model_text = opened.for_model()
+                public_text = opened.for_public()
+                tool_meta.append(
+                    {
+                        "name": "code_exercise",
+                        "args": exercise_args,
+                        "result": model_text,
+                        "exercise_id": payload["exercise_id"],
+                    }
+                )
+                tool_events.append(
+                    {
+                        "name": "code_exercise",
+                        "args": exercise_args,
+                        "result": public_text,
+                        "payload": payload,
+                    }
+                )
 
     if tool_events:
         result = result.model_copy(
