@@ -7,7 +7,12 @@ from fastapi.testclient import TestClient
 
 from app import db
 from app import main as main_mod
-from app.agent import apply_topic_lock, is_shallow_answer, run_turn
+from app.agent import (
+    apply_topic_lock,
+    is_shallow_answer,
+    is_stuck_answer,
+    run_turn,
+)
 from app.models import TurnResult
 
 
@@ -53,15 +58,64 @@ def test_apply_topic_lock_stays_when_direction_is_not_done() -> None:
     assert next_id == "d1"
 
 
+COMPLETE_D1 = (
+    "我已经把 token 进 embedding、再进注意力的整条链路讲完了："
+    "先查表得到向量，再做位置编码，然后进 QKV 投影和缩放点积，最后输出投影。"
+    "到这里输入表示这条 goal 的关键步骤已经讲具体了。"
+)
+COMPLETE_D3 = (
+    "数据清洗、过滤、去重和验证都已经按 goal 问完了："
+    "包括脏样本规则、长度截断、重复指令合并，以及用小批量人工抽检确认指令质量。"
+    "到这里这条数据方向已经没有下一步可以挖，可以收束，不必再发明新主线。"
+)
+
+
+def _history(direction_id: str, answer: str, user_turns: int = 3) -> list[dict]:
+    turns = [
+        {
+            "role": "interviewer",
+            "body": "一个 token ID 进入模型后，先怎样变成 hidden state？",
+            "direction_id": direction_id,
+        }
+    ]
+    for _ in range(user_turns):
+        turns.append({"role": "user", "body": answer, "direction_id": direction_id})
+        turns.append(
+            {
+                "role": "thought",
+                "body": "评价：还在推进。\n查代码：否\n本方向结束：否，因为还没走完。",
+                "direction_id": direction_id,
+            }
+        )
+        turns.append(
+            {
+                "role": "interviewer",
+                "body": "下一步机制是什么？",
+                "direction_id": direction_id,
+            }
+        )
+    return turns
+
+
+def test_apply_topic_lock_does_not_advance_on_first_complete_answer() -> None:
+    done, next_id = apply_topic_lock(
+        directions=DIRECTIONS,
+        current_direction_id="d1",
+        direction_done=True,
+        answer=COMPLETE_D1,
+    )
+    assert done is False
+    assert next_id == "d1"
+
+
 def test_apply_topic_lock_advances_only_to_the_next_existing_direction() -> None:
     done, next_id = apply_topic_lock(
         directions=DIRECTIONS,
         current_direction_id="d1",
         direction_done=True,
-        answer=(
-            "我已经把 token 进 embedding、再进 attention 的整条链路讲完了："
-            "先查表得到向量，再做位置编码，然后进 QKV 投影和缩放点积，最后输出投影。"
-        ),
+        answer=COMPLETE_D1,
+        turns=_history("d1", COMPLETE_D1),
+        goal="问清 token 如何进入注意力",
     )
     assert done is True
     assert next_id == "d2"
@@ -72,11 +126,9 @@ def test_apply_topic_lock_does_not_invent_a_new_direction_at_the_end() -> None:
         directions=DIRECTIONS,
         current_direction_id="d3",
         direction_done=True,
-        answer=(
-            "数据清洗、过滤、去重和验证都已经按 goal 问完了："
-            "包括脏样本规则、长度截断、重复指令合并，以及用小批量人工抽检确认指令质量。"
-            "到这里这条数据方向已经没有下一步可以挖，可以收束，不必再发明新主线。"
-        ),
+        answer=COMPLETE_D3,
+        turns=_history("d3", COMPLETE_D3),
+        goal="问清清洗规则与验证方法",
     )
     assert done is True
     assert next_id == "d3"
@@ -95,13 +147,56 @@ def test_shallow_answer_cannot_finish_a_direction() -> None:
     assert next_id == "d1"
 
 
-def test_explicitly_stuck_answer_may_finish_a_direction() -> None:
+def test_first_stuck_answer_cannot_finish_a_direction() -> None:
+    assert is_stuck_answer("我不会，换个说法还是不知道") is True
     assert is_shallow_answer("我不会，换个说法还是不知道") is False
     done, next_id = apply_topic_lock(
         directions=DIRECTIONS,
         current_direction_id="d1",
         direction_done=True,
         answer="我不会，换个说法还是不知道",
+        turns=[
+            {
+                "role": "interviewer",
+                "body": "一个 token ID 进入模型后，先怎样变成 hidden state？",
+                "direction_id": "d1",
+            }
+        ],
+        goal="问清 token 如何进入注意力",
+    )
+    assert done is False
+    assert next_id == "d1"
+
+
+def test_second_stuck_after_rephrase_may_finish_a_direction() -> None:
+    done, next_id = apply_topic_lock(
+        directions=DIRECTIONS,
+        current_direction_id="d1",
+        direction_done=True,
+        answer="我还是不会，换个说法还是不知道",
+        turns=[
+            {
+                "role": "interviewer",
+                "body": "一个 token ID 进入模型后，先怎样变成 hidden state？",
+                "direction_id": "d1",
+            },
+            {
+                "role": "user",
+                "body": "这块我不太懂",
+                "direction_id": "d1",
+            },
+            {
+                "role": "thought",
+                "body": "评价：空白。\n查代码：否\n本方向结束：否，因为要换说法。",
+                "direction_id": "d1",
+            },
+            {
+                "role": "interviewer",
+                "body": "换个说法：整数编号怎么变成向量？",
+                "direction_id": "d1",
+            },
+        ],
+        goal="问清 token 如何进入注意力",
     )
     assert done is True
     assert next_id == "d2"
@@ -131,7 +226,7 @@ def test_run_turn_overrides_model_skip_on_shallow_answer(monkeypatch) -> None:
     assert tools["meta"] == []
 
 
-def test_run_turn_switches_after_a_complete_answer(monkeypatch) -> None:
+def test_run_turn_keeps_direction_after_first_complete_answer(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.agent.complete_json_with_tools",
         lambda *_args, **_kwargs: _model_turn(
@@ -145,16 +240,50 @@ def test_run_turn_switches_after_a_complete_answer(monkeypatch) -> None:
             {
                 "role": "interviewer",
                 "body": "一个 token ID 进入模型后，先怎样变成 hidden state？",
+                "direction_id": "d1",
             }
         ],
-        answer=(
-            "我已经把 token 进 embedding、再进 attention 的整条链路讲完了："
-            "先查表得到向量，再做位置编码，然后进 QKV 投影和缩放点积，最后输出投影。"
+        answer=COMPLETE_D1,
+    )
+    assert result.direction_done is False
+    assert next_id == "d1"
+    assert "不要跳到别的方向" in result.next_question
+    assert tools["events"] == []
+
+
+def test_run_turn_switches_after_enough_complete_answers(monkeypatch) -> None:
+    monkeypatch.setattr(
+        "app.agent.complete_json_with_tools",
+        lambda *_args, **_kwargs: _model_turn(
+            direction_done=True,
+            next_question="预训练和 SFT 之间损失怎么接？",
         ),
+    )
+    result, next_id, tools = run_turn(
+        session=_session(),
+        turns=_history("d1", COMPLETE_D1),
+        answer=COMPLETE_D1,
     )
     assert result.direction_done is True
     assert next_id == "d2"
     assert tools["events"] == []
+
+
+def test_apply_topic_lock_stays_when_goal_checkpoints_are_missing() -> None:
+    off_topic = (
+        "我花了很多时间和同学讨论过训练稳定性，也写了实验笔记，"
+        "还对比过几种学习率，但没有碰到你问的那一步具体机制。"
+    )
+    done, next_id = apply_topic_lock(
+        directions=DIRECTIONS,
+        current_direction_id="d1",
+        direction_done=True,
+        answer=off_topic,
+        turns=_history("d1", off_topic),
+        goal="问清 token 如何进入注意力",
+    )
+    assert done is False
+    assert next_id == "d1"
 
 
 def _seed_session(session_id: str = "session-sse") -> None:

@@ -98,6 +98,7 @@ def _sample_turns() -> list[dict]:
 def _sample_report() -> str:
     return report.build_report_from_parts(
         overall=(
+            "整场主档：懂但讲不出\n"
             "整场偏「懂但讲不出」，RoPE 名字在、机制不在；"
             "「rerank / 万卡」落在「项目里没有」。\n"
             "真懂：无。懂但讲不出：位置编码为什么要旋转。"
@@ -180,4 +181,9 @@ def test_compose_report_text_keeps_verbatim_and_rejects_missing_section() -> Non
     report_text = _sample_report()
     assert report.compose_report_text(report_text) is report_text
     with pytest.raises(ValueError, match="岗位本质对照"):
-        report.compose_report_text("## 总评\n只有总评")
+        report.compose_report_text("## 总评\n整场主档：真不懂\n只有总评")
+    with pytest.raises(ValueError, match="整场主档"):
+        report.compose_report_text(
+            "## 总评\n没有主档\n\n## 岗位本质对照\n对照\n\n"
+            "## 知识建议\n建议\n\n## 项目改良\n改造"
+        )

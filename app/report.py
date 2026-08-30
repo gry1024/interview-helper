@@ -7,6 +7,7 @@ Replay must go through load_review_for_replay and must not call generators.
 from collections.abc import Mapping, Sequence
 import json
 from pathlib import Path
+import re
 from typing import Any
 
 from app.review_models import ReviewSnapshot
@@ -35,6 +36,18 @@ LIVE_THOUGHT_FORBIDDEN = (
     "知识建议",
     "项目改良",
 )
+PRIMARY_BANDS = ("真懂", "懂但讲不出", "真不懂", "项目里没有")
+HIGH_PRIMARY_BANDS = frozenset({"真懂", "懂但讲不出"})
+LOW_PRIMARY_BANDS = frozenset({"真不懂", "项目里没有"})
+PRIMARY_BAND_RE = re.compile(
+    r"整场主档\s*[：:]\s*(真懂|懂但讲不出|真不懂|项目里没有)"
+)
+PRIMARY_BAND_RANK = {
+    "真懂": 3,
+    "懂但讲不出": 2,
+    "真不懂": 1,
+    "项目里没有": 1,
+}
 
 
 def load_report_prompt() -> str:
@@ -59,6 +72,15 @@ def thoughts_leak_report_content(turns: Sequence[Mapping[str, Any]]) -> bool:
     return False
 
 
+def extract_primary_band(report_text: str) -> str:
+    """Read the single overall band required in the 总评 opening."""
+
+    match = PRIMARY_BAND_RE.search(report_text or "")
+    if not match:
+        raise ValueError("报告总评必须标明整场主档")
+    return match.group(1)
+
+
 def compose_report_text(model_output: str) -> str:
     """Accept a finished report. Keep every character; do not summarize."""
 
@@ -67,6 +89,7 @@ def compose_report_text(model_output: str) -> str:
     missing = [title for title in REPORT_SECTION_TITLES if title not in model_output]
     if missing:
         raise ValueError(f"报告缺少必要段落: {'、'.join(missing)}")
+    extract_primary_band(model_output)
     return model_output
 
 

@@ -236,6 +236,8 @@ def test_write_report_loads_report_prompt_not_interviewer(monkeypatch) -> None:
     assert text == _sample_report()
     assert tools["events"] == []
     assert "终场诊断报告" in captured["system"]
+    assert "整场主档" in captured["system"]
+    assert "禁止默认「懂但讲不出」" in captured["system"]
     assert "只负责开场规划" not in captured["system"]
     assert "请只锁在当前方向继续深挖" not in captured["user"]
     start = captured["user"].find("{")

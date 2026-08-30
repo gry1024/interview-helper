@@ -275,6 +275,38 @@ def test_run_turn_clone_ok_false_keeps_interview_going(monkeypatch) -> None:
     assert ".py:" not in result.next_question
 
 
+def test_run_turn_forces_inspect_when_model_skips_fabricated_claim(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    repos = tmp_path / "repos"
+    monkeypatch.setattr(repository, "REPOS_DIR", repos)
+    session_id = "session-force-rerank"
+    root = repos / session_id
+    root.mkdir(parents=True)
+    _write_minimind_fixture(root)
+
+    completions = _FakeCompletions(
+        [_FakeResponse(_FakeMessage(content=json.dumps(_legal_turn_json())))]
+    )
+    _install_client(monkeypatch, completions)
+
+    result, next_id, tools = run_turn(
+        session=_session(session_id, clone_ok=True),
+        turns=[{"role": "interviewer", "body": "token 先怎么变成向量？", "direction_id": "d1"}],
+        answer="这块我大概会。另外我还做了 rerank，并且在分布式万卡上训练过。",
+    )
+    assert next_id == "d1"
+    assert result.direction_done is False
+    assert tools["events"]
+    assert tools["events"][0]["name"] == "code_inspect"
+    assert "查代码：是" in result.thought
+    assert "未体现" in tools["events"][0]["result"]
+    assert "rerank" in tools["events"][0]["result"]
+    assert "万卡" in tools["events"][0]["result"]
+    assert CODE_COORDINATE.search(result.next_question) is None
+
+
 def test_run_turn_retries_when_question_has_coordinates(
     tmp_path: Path,
     monkeypatch,
