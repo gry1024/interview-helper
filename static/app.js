@@ -706,8 +706,10 @@ async function openCodeExercise(raw) {
     codeExerciseState.exercise_id === exercise.exercise_id
   ) {
     codeIde.hidden = false;
+    codeIde.dataset.exerciseId = exercise.exercise_id;
     setIdeLayoutOpen(true);
     codeIde.dataset.ready = "1";
+    syncIdeChrome();
     return;
   }
   const seq = ++ideOpenSeq;
