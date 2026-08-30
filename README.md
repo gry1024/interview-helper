@@ -1,8 +1,12 @@
-![interview-helper](assets/logo.svg)
+<p align="center">
+  <img src="assets/logo.svg" alt="interview-helper" width="72" height="72">
+</p>
 
-# interview-helper
+<h1 align="center">
+  <a href="http://120.26.176.60/">interview-helper</a>
+</h1>
 
-**把简历上那个项目，变成你真正拥有的项目。**
+<p align="center"><strong>把简历上那个项目，变成你真正拥有的项目。</strong></p>
 
 ---
 
@@ -55,6 +59,8 @@
 - **JD**：企业写在纸上的筛人标准。「考察什么能力」
 - **面经**：企业实际怎么面，求职者的经验分享。信息源以小红书为主，兼招聘平台与公司官网。「怎么问、怎么追」（小红书采集借用开源爬虫工具 [cv-cat/Spider_XHS](https://github.com/cv-cat/Spider_XHS)。）
 
+
+
 ### 功能模块
 
 输入：**一个项目陈述 + GitHub 仓库 + 岗位**
@@ -62,6 +68,8 @@
 1. 根据岗位选定面试官专家agent。开场前根据项目陈述预设若干话题方向，贯穿整场。一场只面这一个项目。
 2. 每答之后：评价 → 检索面经/查仓库/考核手撕 → 判断本话题继续深挖，或切换方向提问。
 3. 同一方向可以很多轮，一步步引到挖不动为止。
+
+
 
 ### 刻意不做
 
@@ -108,13 +116,13 @@
 ## 文档
 
 
-| 文档                           | 内容                  |
-| ---------------------------- | ------------------- |
-| [PRODUCT_MEMO.md](PRODUCT_MEMO.md) | 根本文档：用户、设计、迭代、下一步 |
-| [docs/产品理念.md](docs/产品理念.md) | 给谁、为什么只做单项目深挖、刻意不做  |
-| [docs/产品功能.md](docs/产品功能.md) | 三入口、面试官/老师、两个 tool  |
-| [docs/技术实现.md](docs/技术实现.md) | 栈、Agent 循环、表、SSE、安全 |
-| [docs/开发计划.md](docs/开发计划.md) | 分步实现与验收             |
+| 文档                                 | 内容                  |
+| ---------------------------------- | ------------------- |
+| [PRODUCT_MEMO.md](PRODUCT_MEMO.md) | 根本文档：用户、设计、迭代、下一步   |
+| [docs/产品理念.md](docs/产品理念.md)       | 给谁、为什么只做单项目深挖、刻意不做  |
+| [docs/产品功能.md](docs/产品功能.md)       | 三入口、面试官/老师、两个 tool  |
+| [docs/技术实现.md](docs/技术实现.md)       | 栈、Agent 循环、表、SSE、安全 |
+| [docs/开发计划.md](docs/开发计划.md)       | 分步实现与验收             |
 
 
 ---
