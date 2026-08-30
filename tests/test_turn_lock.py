@@ -197,6 +197,18 @@ def test_turns_endpoint_streams_required_sse_events(
     assert "RoPE 具体旋转的是哪一部分？" in body
 
 
+def test_turn_result_allows_a_longer_but_single_next_question() -> None:
+    question = "整数 token 先要变成向量才能算，这个映射表叫什么，参数是学出来的吗？" * 3
+    result = TurnResult.model_validate(
+        {
+            "thought": "评价：仍停在术语层。\n查代码：否\n本方向结束：否，因为 embedding 还没问到。",
+            "direction_done": False,
+            "next_question": question,
+        }
+    )
+    assert result.next_question == question
+
+
 def test_ended_session_cannot_continue_turns(
     tmp_path: Path,
     monkeypatch,

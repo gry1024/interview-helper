@@ -99,7 +99,7 @@ class TurnCreate(BaseModel):
 class TurnResult(BaseModel):
     thought: str = Field(min_length=8, max_length=4000)
     direction_done: bool
-    next_question: str = Field(min_length=4, max_length=220)
+    next_question: str = Field(min_length=4, max_length=360)
 
     @field_validator("thought", "next_question")
     @classmethod

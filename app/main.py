@@ -4,6 +4,7 @@ import asyncio
 from collections import defaultdict, deque
 from contextlib import asynccontextmanager
 import json
+import logging
 from pathlib import Path
 import re
 from time import monotonic
@@ -34,6 +35,7 @@ from app.repository import (
 ROOT_DIR = Path(__file__).resolve().parent.parent
 STATIC_DIR = ROOT_DIR / "static"
 JD_DIR = ROOT_DIR / "app" / "jd"
+logger = logging.getLogger(__name__)
 RATE_LIMIT = 10
 RATE_WINDOW_SECONDS = 60
 _write_requests: defaultdict[str, deque[float]] = defaultdict(deque)
@@ -226,6 +228,7 @@ async def create_turn(
                 yield _sse("done", {})
                 return
             except Exception:
+                logger.exception("turn stream failed")
                 yield _sse("error", {"message": "本轮追问失败，请稍后重试"})
                 yield _sse("done", {})
                 return

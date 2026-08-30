@@ -1,6 +1,7 @@
 """Interview agents that plan directions and lock topic during turns."""
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +12,7 @@ from app.models import DirectionPlan, TurnResult
 
 
 APP_DIR = Path(__file__).resolve().parent
+logger = logging.getLogger(__name__)
 ROLE_LABELS = {
     "llm-algo": "LLM 算法实习",
     "training": "大模型训练与对齐",
@@ -215,11 +217,24 @@ direction_done=true 时，下一问只能是下一条已定方向的第一步；
 请只锁在当前方向继续深挖。答得差也只换更朴素的说法，不要跳方向，不要发明新方向，不要给建议或总评。
 """.strip()
 
-    raw_result = complete_json(system_prompt, user_prompt)
-    try:
-        result = TurnResult.model_validate(raw_result)
-    except ValidationError as exc:
-        raise LLMError("MiniMax turn result did not match the contract") from exc
+    result: TurnResult | None = None
+    last_error: Exception | None = None
+    retry_hint = ""
+    for _attempt in range(2):
+        raw_result = complete_json(system_prompt, user_prompt + retry_hint)
+        try:
+            result = TurnResult.model_validate(raw_result)
+            break
+        except ValidationError as exc:
+            last_error = exc
+            logger.warning("turn JSON failed contract validation: %s", exc)
+            retry_hint = (
+                "\n\n上次输出不合规。请重新输出合法 JSON："
+                "thought 必须含评价、查代码、本方向结束；"
+                "不要建议或总评；next_question 只问一件事、一个问号、不要文件名行号。"
+            )
+    if result is None:
+        raise LLMError("MiniMax turn result did not match the contract") from last_error
 
     locked_done, next_direction_id = apply_topic_lock(
         directions=directions,
