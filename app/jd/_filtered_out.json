@@ -103,5 +103,50 @@
     "source_name": "牛客",
     "captured_at": "2026-08-30",
     "text": "牛客职位页学历标签为硕士。职责含长程Agent能力建设、多模态融合、Agent强化学习、主动交互与记忆进化。岗位要求正文未写本科可投。"
+  },
+  {
+    "published_at": "",
+    "education": "master",
+    "requirements": "任职要求】\n2年以上计算机科学或相关领域的科研经验，水平过硬，眼界广阔，有科研品味。特别优秀候选人可放宽年限。\n硕士学历及以上。特别优秀候选人可放宽。\n计算机科学领域具有含金量的科研成果。\n面对问题能够独立分析并提出自己的 idea，具备从 0 到 1 推动研究的能力。能够快速将想法转化为可运行的原型，具备高效的实验迭代能力。\n熟练使用 AI Agent 工具进行软件开发。在软件开发领域具有极强的学习能力。能够在 AI 辅助下，在没有直接经验的领域（如语言、技术、框架等）进行研究目的的编程工作。\n是 Agent 产品的高强度用户，对 Agent Harness 的开发和研究有极大的热情，对模型行为有品味有判断力。深度使用过代码类及通用类Agent产品，并将相关产品的使用融入到自己的工作和生活中。\n熟悉 LLM 以及 Agent 基本机制及其技术原理，包括 LLM API、KV Cache、Agent Loop、Tool Use、Reasoning、Planning、Skills、MCP、Memory、Subagent、Multi-Agent 等相关知识。对 Prompt Enginee",
+    "question_types": "",
+    "experience": "",
+    "id": "deepseek-agent-harness",
+    "kind": "jd",
+    "company": "DeepSeek",
+    "role": "Agent Harness 团队",
+    "source_url": "https://app.mokahr.com/social-recruitment/high-flyer/140576#/job/8d40c764-d2b2-49b1-826c-e3f2adb75c01",
+    "source_name": "官方招聘",
+    "captured_at": "2026-08-30",
+    "text": "Agent Harness 团队\n工作地点：北京市 海淀区、浙江 拱墅区\n官方注明招聘方向含实习/全职。\n加入 DeepSeek Harness 团队，探索 Agent Harness 方向的未知前沿。\n【团队使命】\nModel + Harness = Agent\n我们正在以研究、工程、产品相结合的方式，把 DeepSeek 的模型能力转化为前沿的科研突破与领先的 Agent 产品。\n你将加入 Harness 团队，探索 Harness 领域的研究、工程与产品前沿，定义 DeepSeek 对 Harness 的理解。\n招聘方向\n：\n深度学习研究员\n、\n研发工程师\n、\n开发者关系\n、\n产品经理\n、\n产品设计师\n、\n项目经理\n、\n产品运营\n。\n各个招聘方向\n均可实习或全职\n。\n深度学习研究员方向\n加入 DeepSeek Harness 团队，探索 Agent Harness 方向的研究前沿。全职、实习均可。\n【主要职责】\n与 Harness 团队的研究员与工程师深度沟通、紧密合作，共同定义和实现 Harness 领域基于模型能力的前沿创新，包括但不限于上下文管理、长期记忆、Subagent 与 Multi-Agent、自进化 Agent、超长程任务等领域。\n与模型训练团队的研究员与工程师深度沟通与合作，从 Harness 的角度实现 DeepSeek 的 Harness 与模型的深度适配，实现模型与 Harness 的持续共同进化。\n提出 Harness 领域的基准测试与评测方法，构建评测基准数据和制定数据标注策略，从 Harness 的角度研究并优化 Agent 在各领域的智能水平。\n基于多层面的用户反馈，以真实世界的任务做为 Harness 研究的重要反馈源，设计相关数据与实验，持续迭代 Agent 能力在真实使用场景下的表现。\n【任职要求】\n2年以上计算机科学或相关领域的科研经验，水平过硬，眼界广阔，有科研品味。特别优秀候选人可放宽年限。\n硕士学历及以上。特别优秀候选人可放宽。\n计算机科学领域具有含金量的科研成果。\n面对问题能够独立分析并提出自己的 idea，具备从 0 到 1 推动研究的能力。能够快速将想法转化为可运行的原型，具备高效的实验迭代能力。\n熟练使用 AI Agent 工具进行软件开发。在软件开发领域具有极强的学习能力。能够在 AI 辅助下，在没有直接经验的领域（如语言、技术、框架等）进行研究目的的编程工作。\n是 Agent 产品的高强度用户，对 Agent Harness 的开发和研究有极大的热情，对模型行为有品味有判断力。深度使用过代码类及通用类Agent产品，并将相关产品的使用融入到自己的工作和生活中。\n熟悉 LLM 以及 Agent 基本机制及其技术原理，包括 LLM API、KV Cache、Agent Loop、Tool Use、Reasoning、Planning、Skills、MCP、Memory、Subagent、Multi-Agent 等相关知识。对 Prompt Engineering、Context Engineering、Harness Engineering 等课题有深入的理解。\n良好的中文沟通能力。\n【加分项】\nAI领域相关科研经验，AI行业的研究员任职经验。\n个人开源作品及开源社区的深度贡献。\n计算机科学领域、编程领域、数学或数据科学领域具有含金量的比赛奖项。\n其它超乎常人的与此工作相关的才能。\n研发工程师方向\n加入 DeepSeek Harness 团队，探索和解决面向下一代 Agent Harness 的工程难题。全职、实习均可。\n【主要职责】\n参与设计 DeepSeek 的 Harness 产品的技术架构与选型。\n参与开发 DeepSeek 的 Harness 产品。\n与研究员紧密合作，共同定义和实现 Harness 领域的前沿创新。\n与模型训练团队的工程师与研究员深度沟通与合作，参与实现模型与 Harness 的共同进化，从 Harness 的角度实现 DeepSeek 的 Harness 与模型的深度适配。\n以内部真实任务做为 Harness 产品和模型相关能力训练的重要反馈源，持续迭代产品能力。\n理解并分析团队收集到的用户反馈。在有兴趣且力所能及的前提下，协助维护 Harness 产品用户社群。\n协助项目管理相关工作。\n【任职要求】\n技术水平过硬，技术眼界广阔。\n知名高校本科学历及以上。\n熟练使用 AI Agent 工具进行软件开发。在软件开发领域具有极强的学习能力。能够在 AI 辅助下，在没有直接经验的领域（如语言、技术、框架等）进行有质量保证的编程工作。\n是 Agent 产品的高强度用户，对 Agent Harness 的开发有极大的热情，对模型行为有品味有判断力，对开发者体验有强感知。深度使用过代码类及通用类Agent产品，并将相关产品的使用融入到自己的工作和生活中。\n熟悉 LLM 以及 Agent 基本机制及其技术原理，包括 LLM API、KV Cache、Agent Loop、Tool Use、Reasoning、Planning、Skills、MCP、Memory、Subagent、Multi-Agent 等相关知识。对 Prompt Engineering、Context Engineering、Harness Engineering 等课题有较深入的了解。\n良好的中文沟通能力。\n【加分项】\nAI行业相关软件开发经验。\n作为小团队中的研发工程师快速迭代产品的经验。\n个人开源作品及开源社区的深度贡献。\n与研究员深度协作的经验或科研经验，有科研品味。\n能用英文与开源社区、用户社群沟通。\n计算机科学领域、编程领域、或数据科学领域具有含金量的比赛奖项。\n计算机科学及其它学术领域具有含金量的论文发表。\n其它超乎常人的与此工作相关的才能。\n开发者关系方向\n加入 DeepSeek Harness 团队，建设面向全球 DSH 开发者的社区与沟通体系，让社区实践和反馈持续反哺产品迭代，提升开发质量和开发速度。全职、实习均可。\n【主要职责】\n建设和维护 DSH 全球开发者社区，包括 GitHub、用户社群及线上或线下活动。\n与开发团队和运营同学合作，向社区准确传达产品方向、roadmap 和版本变化，完成版本解读及相关内容传播。\n发现、筛选和整理高质量的社区 Demo 与真实使用案例，并推动其在社区中传播。\n收集、整理和提炼社区反馈，补充使用场景和必要的技术信息；协助开发团队分析和解决问题，并向社区同步进展与结果。\n从开发者视角辅助开发团队评审官方文档和示例，发现内容缺口、理解障碍及常见误区。\n【任职要求】\n具备一定的软件开发经验，能够独立使用 DSH、阅读代码和技术文档，并完成基础的问题验证和排查。\n对开发者工具和开发者体验有较强感知，能够发现使用障碍，并将零散反馈整理成准确、清晰、可供开发团队采取行动的信息。\n中英文均可作为工作语言，能够进行技术写作、社区沟通和公开表达。\n熟悉 GitHub，有开源项目或社区协作经历。\n对开源有持续热情，沟通真诚、克制且有耐心，认同通过技术价值、公开协作和长期信任建设开发者社区。\n不要求必须具有 DevRel 职位经历。开发者、开源社区参与者、技术内容作者或其他相关背景均可。\n【加分项】\n深度使用或开发过 AI、LLM、Agent、开发者工具或开源基础设施。\n有 DSH 插件开发经历，熟悉 DSH 的插件机制和开发流程。\n有开源项目维护或核心贡献经验。\n具有国际视野，能够理解不同文化背景开发者的沟通习惯；有海外学习、工作或生活经历，或面向全球受众的英文写作经验。\n产品经理方向\n加入 DeepSeek Harness 团队，探索和定义下一代 Agent 产品形态。全职、实习均可。\n【主要职责】\n规划 DeepSeek Harness 产品路线图，连接研究员、工程师、开源社区和广大用户。\n理解判断用户的最真实需求，定义与衡量“Agent 是否真的在更多场景下更深入的帮助到更多的人”的指标。\n帮助 Harness 产品落地，持续跟踪真实场景下的用户任务。推动产品创新和体验优化。\n维护 Harness 产品用户社群，从潜在海量用户群体中获取反馈、提取信号，指导产品迭代。\n与模型训练团队的研究员深度沟通与合作，实现模型与 Harness 的共同进化。\n协助项目管理相关工作。\n【任职要求】\n2年以上产品经理从业经验，产品逻辑清晰。特别优秀的候选人可放宽年限。\n知名高校本科学历及以上。\n能够使用 vibe coding 写代码，不一定需要技术背景。\n具备UI/UX设计素养。能够在 AI 辅助下完成产品原型图设计、UI设计等相关的产品设计工作。\n是 Agent 产品的高强度用户，熟悉 Agent 产品的各种形态，对 Agent 有极大的热情，对模型行为有品味有判断力，对开发者体验及用户体验有强感知。深度使用过 Claude Code、Cowork、Codex、Cursor、OpenCode、GitHub Copilot、Manus、OpenClaw、Hermes 等类似产品，并将相"
+  },
+  {
+    "published_at": "2026-05-18",
+    "education": "master",
+    "requirements": "计算机、信息科学、数学或相关专业硕士/博士学位。",
+    "question_types": "",
+    "experience": "",
+    "id": "alibaba-agentic-posttraining-intern-199903700001",
+    "kind": "jd",
+    "company": "阿里巴巴",
+    "role": "Agentic Post-Training算法实习生",
+    "source_url": "https://campus-talent.alibaba.com/campus/position/199903700001",
+    "source_name": "官方招聘",
+    "captured_at": "2026-08-30",
+    "text": "Agentic Post-Training算法实习生\n招聘项目 Alibaba Project Intern。毕业起止 2027-02-28 - 2030-12-30。更新于 2026-05-18。\n【关于我们】团队负责Accio Agentic模型整体后训练，核心关注coding和computer use能力，通过持续探索Agent、Agent Harness、Post-training、RL、Memory等前沿技术，自研Agent模型、Agent系统，实现B2B AI Agent跨越式发展。\n【职责描述】\n1. 核心模型演进： 深度参与大规模 Agentic LLM 的全链路研发，涵盖 Mid-train/CPT、SFT 及 RL 阶段；\n2. 工程化与基准建设： 参与构建代码库级别的 Benchmark；\n3. Black-box Agent RL & Online Learning：策略建模与优化、Online RL 框架、Long-horizon RL 信用分配；\n4. Computer-Use Agent 系统建设：全链路数据 Scaling、基于 Bash/Skills/MCP 的执行引擎、多场景交互闭环。\nQualifications\n1. 深厚的技术背景：计算机、信息科学、数学或相关专业硕士/博士学位，业界AI/Agent团队的相关实习和工作经验；\n2. 有较好工程能力，有Coding/Search Agent构建、Agent记忆系统构建、Multi-agent协作设计者优先；\n3. 有较强的自驱力、学习力、创新力和抗压能力；\n4. 加分项：在ICLR、CVPR、ICCV、ACL、NeurIPS等顶会上发表过高质量论文，有高质量github开源项目者优先。"
+  },
+  {
+    "published_at": "2026-01-19",
+    "education": "master",
+    "requirements": "1.硕士研究生及以上学历，计算机相关专业优先考虑。",
+    "question_types": "",
+    "experience": "",
+    "id": "meituan-search-llm-intern-4118924427",
+    "kind": "jd",
+    "company": "美团",
+    "role": "搜索/大模型算法工程师实习-日常实习",
+    "source_url": "https://zhaopin.meituan.com/web/position/detail?highlightType=campus&jobUnionId=4118924427",
+    "source_name": "官方招聘",
+    "captured_at": "2026-08-30",
+    "text": "【实习】搜索/大模型算法工程师实习-日常实习\n更新时间：2026/01/19。工作地点：上海市。部门：核心本地商业-业务研发平台。\n岗位职责\n1.负责参与美团搜索算法的研发和优化，利用大模型技术持续提升搜索的效果和用户体验。\n2.根据业务需求，设计和实现各种搜索算法机制，包括但不限于相关性、Query理解、向量召回、个性化排序等。\n3.分析和挖掘用户行为数据，通过数据分析和挖掘为算法的改进提供支持。\n4.跟踪行业前沿技术和算法发展，不断学习和研究新的算法模型和方法。\n岗位基本要求\n1.硕士研究生及以上学历，计算机相关专业优先考虑。\n2.对算法和数据结构有深入的理解，具备扎实的编程能力，熟悉至少一种主流编程语言（如Python、Java等）。\n3.对机器学习、数据挖掘和推荐系统等领域有一定了解，熟悉常见的算法模型和方法。\n4.具备良好的数学基础，熟悉统计学和概率论。\n5.具备良好的团队合作能力和沟通能力。\n6.具备较强的问题分析和解决能力。"
   }
 ]

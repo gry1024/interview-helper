@@ -56,6 +56,11 @@ RATE_WINDOW_SECONDS = 60
 _write_requests: defaultdict[str, deque[float]] = defaultdict(deque)
 _active_turns: set[str] = set()
 _THOUGHT_SPLIT = re.compile(r"(?<=[。！？\n])")
+_ISO_DATE = re.compile(r"^(\d{4}-\d{2}-\d{2})")
+_SLASH_DATE = re.compile(r"^(\d{4})/(\d{2})/(\d{2})")
+LIBRARY_DEFAULT_PAGE_SIZE = 9
+LIBRARY_MAX_PAGE_SIZE = 24
+LIBRARY_DATE_FIELDS = ("published_at", "created_at", "date", "captured_at")
 
 
 @asynccontextmanager
@@ -70,7 +75,13 @@ app = FastAPI(title="Interview Helper", lifespan=lifespan)
 @app.middleware("http")
 async def disable_static_cache(request: Request, call_next):
     response = await call_next(request)
-    if request.url.path in {"/", "/index.html", "/app.js", "/styles.css"}:
+    if request.url.path in {
+        "/",
+        "/index.html",
+        "/app.js",
+        "/styles.css",
+        "/demo-projects.json",
+    }:
         response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -151,12 +162,44 @@ def is_xiaohongshu_sample(sample: dict[str, Any]) -> bool:
     return "小红书" in blob or "xiaohongshu" in blob or "xhslink" in blob
 
 
-def _library_sort_key(sample: dict[str, Any]) -> tuple[int, str, str]:
-    return (
-        0 if is_xiaohongshu_sample(sample) else 1,
-        str(sample.get("captured_at") or sample.get("published_at") or ""),
-        str(sample.get("id") or sample.get("source_url") or ""),
-    )
+def sample_sort_date(sample: dict[str, Any]) -> str:
+    """Return a real YYYY-MM-DD from existing fields; empty if none (do not invent)."""
+
+    for key in LIBRARY_DATE_FIELDS:
+        raw = str(sample.get(key) or "").strip()
+        if not raw:
+            continue
+        iso = _ISO_DATE.match(raw)
+        if iso:
+            return iso.group(1)
+        slash = _SLASH_DATE.match(raw)
+        if slash:
+            return f"{slash.group(1)}-{slash.group(2)}-{slash.group(3)}"
+    return ""
+
+
+def _sample_ident(sample: dict[str, Any]) -> str:
+    return str(sample.get("id") or sample.get("source_url") or "")
+
+
+def sort_library_samples(samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Newest dated samples first; undated samples stay at the end."""
+
+    dated: list[dict[str, Any]] = []
+    missing: list[dict[str, Any]] = []
+    for sample in samples:
+        (dated if sample_sort_date(sample) else missing).append(sample)
+    dated.sort(key=lambda item: (sample_sort_date(item), _sample_ident(item)), reverse=True)
+    missing.sort(key=_sample_ident)
+    return dated + missing
+
+
+def _with_sort_date(sample: dict[str, Any]) -> dict[str, Any]:
+    copied = dict(sample)
+    sort_date = sample_sort_date(sample)
+    if sort_date:
+        copied["sort_date"] = sort_date
+    return copied
 
 
 def publish_library() -> dict[str, list[dict[str, Any]]]:
@@ -171,16 +214,61 @@ def publish_library() -> dict[str, list[dict[str, Any]]]:
                 buckets["interviews"].append(sample)
             else:
                 buckets["jds"].append(sample)
-    buckets["jds"].sort(key=_library_sort_key)
-    buckets["interviews"].sort(key=_library_sort_key)
+    buckets["jds"] = [_with_sort_date(item) for item in sort_library_samples(buckets["jds"])]
+    buckets["interviews"] = [
+        _with_sort_date(item) for item in sort_library_samples(buckets["interviews"])
+    ]
     return buckets
 
 
-@app.get("/api/jds")
-def list_job_samples() -> dict[str, list[dict[str, Any]]]:
-    """Return sourced JD/interview samples filtered for undergraduates."""
+def paginate_library(
+    kind: str,
+    page: int = 1,
+    page_size: int = LIBRARY_DEFAULT_PAGE_SIZE,
+) -> dict[str, Any]:
+    """Return one page of JD or interview samples, newest first."""
 
-    return publish_library()
+    size = min(max(int(page_size), 1), LIBRARY_MAX_PAGE_SIZE)
+    current = max(int(page), 1)
+    library = publish_library()
+    items = library["interviews"] if kind == "interview" else library["jds"]
+    total = len(items)
+    pages = math.ceil(total / size) if total else 0
+    start = (current - 1) * size
+    return {
+        "items": items[start : start + size],
+        "total": total,
+        "page": current,
+        "pages": pages,
+        "page_size": size,
+        "type": kind,
+    }
+
+
+@app.get("/api/jds")
+def list_job_samples(
+    sample_type: str | None = Query(default=None, alias="type"),
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(
+        default=LIBRARY_DEFAULT_PAGE_SIZE,
+        ge=1,
+        le=LIBRARY_MAX_PAGE_SIZE,
+    ),
+) -> dict[str, Any]:
+    """Return sourced JD/interview samples; pass type=interview|jd for a page."""
+
+    if sample_type is None:
+        return publish_library()
+
+    kind = sample_type.strip().lower()
+    if kind in {"面经"}:
+        kind = "interview"
+    if kind not in {"interview", "jd"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="type 只能是 jd 或 interview",
+        )
+    return paginate_library(kind, page, page_size)
 
 
 def _enforce_write_rate_limit(request: Request) -> None:

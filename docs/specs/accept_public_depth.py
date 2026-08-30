@@ -23,11 +23,17 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from app.demo_catalog import get_demo  # noqa: E402
 from app.report import PRIMARY_BAND_RANK, extract_primary_band  # noqa: E402
 
 PUBLIC_URL = "http://120.26.176.60"
-GITHUB_URL = "https://github.com/jingyaogong/minimind.git"
-ROLE = "llm-algo"
+MINIMIND = get_demo("minimind")
+NANO_VLLM = get_demo("nano-vllm")
+GITHUB_URL = MINIMIND["github_url"]
+ROLE = MINIMIND["role"]
+MIND_STATEMENT = MINIMIND["statement"]
+NANO_VLLM_GITHUB_URL = NANO_VLLM["github_url"]
+NANO_VLLM_STATEMENT = NANO_VLLM["statement"]
 MIN_ANSWERS = 14
 TURN_TIMEOUT_MS = 300_000
 START_TIMEOUT_MS = 180_000
@@ -35,15 +41,6 @@ END_TIMEOUT_MS = 300_000
 CODE_COORDINATE = re.compile(
     r"(?:[\w./-]+\.(?:py|js|ts|tsx|java|go|rs|cpp|c|h))(?::\d+)?",
     re.I,
-)
-MIND_STATEMENT = (
-    "MiniMind:全链路轻量级大语言模型复现与训练：为深入探究LLM内部机制，"
-    "复现了一个类LLaMA架构的轻量级语言模型 (Decoder-only)，涵盖从 Tokenizer训练、"
-    "预训练(Pre-train)、指令微调(SFT)到DPO对齐的完整流水线。核心工作: "
-    "基于PyTorch复现了LLaMA的核心组件，包括RoPE旋转位置编码（提升外推性) "
-    "RMSNorm(优化收敛速度)及SwiGLU激活函数， 深入掌握了 Transformer的底层计算细节。"
-    "构建并清洗中文指令数据集，设计 Prompt Template，成功跑通了从无监督预训练到"
-    "指令跟随的完整训练闭环。"
 )
 EXCELLENT_CATALOG = [
     (

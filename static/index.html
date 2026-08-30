@@ -13,9 +13,9 @@
     >
     <link rel="preconnect" href="https://registry.npmmirror.com">
     <link rel="preconnect" href="https://cdn.jsdelivr.net">
-    <link rel="stylesheet" href="/styles.css?v=15">
+    <link rel="stylesheet" href="/styles.css?v=17">
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.2.6/dist/purify.min.js"></script>
-    <script src="/app.js?v=15" defer></script>
+    <script src="/app.js?v=17" defer></script>
   </head>
   <body>
     <div class="app-shell">
@@ -83,6 +83,28 @@
 
           <div class="interview-start" id="interview-start">
             <form class="session-form" id="session-form" novalidate>
+              <div class="demo-strip" role="group" aria-label="试用样本">
+                <span class="demo-strip-label">试用样本</span>
+                <button
+                  class="demo-btn"
+                  id="demo-minimind"
+                  type="button"
+                  data-demo="minimind"
+                  aria-pressed="false"
+                >
+                  试用 MiniMind
+                </button>
+                <button
+                  class="demo-btn"
+                  id="demo-nano-vllm"
+                  type="button"
+                  data-demo="nano-vllm"
+                  aria-pressed="false"
+                >
+                  试用 nano-vLLM
+                </button>
+              </div>
+
               <label class="field">
                 <span>GitHub 仓库</span>
                 <input

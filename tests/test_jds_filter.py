@@ -1,9 +1,29 @@
-"""Undergraduate audience filter for /api/jds."""
+"""Undergraduate audience filter and JD/interview library pagination."""
 
 from fastapi.testclient import TestClient
 
 from app import main as main_mod
-from app.main import is_graduate_targeted, is_xiaohongshu_sample, publish_library
+from app.main import (
+    is_graduate_targeted,
+    is_xiaohongshu_sample,
+    paginate_library,
+    publish_library,
+    sample_sort_date,
+)
+
+
+def _interview(sample_id: str, **fields) -> dict:
+    row = {
+        "id": sample_id,
+        "company": sample_id,
+        "role": "面经",
+        "kind": "interview",
+        "source_url": f"https://example.com/{sample_id}",
+        "source_name": "牛客",
+        "text": "问了 Attention",
+    }
+    row.update(fields)
+    return row
 
 
 def test_education_field_filters_master_and_phd() -> None:
@@ -93,35 +113,119 @@ def test_api_jds_splits_kind_and_drops_graduate(monkeypatch) -> None:
     assert data["interviews"][0]["experience"] == "项目拷打很深"
 
 
-def test_publish_library_puts_xiaohongshu_first(monkeypatch) -> None:
+def test_sample_sort_date_uses_real_fields_and_skips_empty() -> None:
+    assert sample_sort_date({"published_at": "2026-08-29"}) == "2026-08-29"
+    assert (
+        sample_sort_date({"published_at": "", "captured_at": "2026-08-30"})
+        == "2026-08-30"
+    )
+    assert sample_sort_date({"created_at": "2026/07/13"}) == "2026-07-13"
+    assert (
+        sample_sort_date({"published_at": "  ", "date": "2026-01-02T18:00:00"})
+        == "2026-01-02"
+    )
+    assert sample_sort_date({"company": "无日期"}) == ""
+
+
+def test_publish_library_sorts_newest_first_not_xiaohongshu(monkeypatch) -> None:
     def fake_load(filename: str):
         if filename == "jds.json":
             return []
         return [
-            {
-                "id": "nowcoder-later",
-                "company": "牛客公司",
-                "role": "面经",
-                "kind": "interview",
-                "source_url": "https://www.nowcoder.com/feed/a",
-                "source_name": "牛客网",
-                "text": "问了 Attention",
-            },
-            {
-                "id": "xhs-first",
-                "company": "小红书帖",
-                "role": "面经",
-                "kind": "interview",
-                "source_url": "https://www.xiaohongshu.com/explore/abc",
-                "source_name": "小红书",
-                "text": "手撕 LoRA",
-            },
+            _interview(
+                "xhs-old",
+                source_url="https://www.xiaohongshu.com/explore/old",
+                source_name="小红书",
+                published_at="2026-01-01",
+            ),
+            _interview(
+                "nowcoder-new",
+                source_url="https://www.nowcoder.com/feed/new",
+                source_name="牛客网",
+                published_at="2026-08-20",
+            ),
+            _interview("undated", published_at="", captured_at=""),
+            _interview("mid", published_at="2026-03-15"),
         ]
 
     monkeypatch.setattr(main_mod, "_load_samples", fake_load)
     payload = publish_library()
     assert [item["id"] for item in payload["interviews"]] == [
-        "xhs-first",
-        "nowcoder-later",
+        "nowcoder-new",
+        "mid",
+        "xhs-old",
+        "undated",
     ]
-    assert is_xiaohongshu_sample(payload["interviews"][0])
+    assert payload["interviews"][0]["sort_date"] == "2026-08-20"
+    assert "sort_date" not in payload["interviews"][-1]
+    assert not is_xiaohongshu_sample(payload["interviews"][0])
+
+
+def test_paginate_library_page_one_last_and_empty(monkeypatch) -> None:
+    def fake_load(filename: str):
+        if filename == "jds.json":
+            return []
+        return [
+            _interview(f"iv-{index:02d}", published_at=f"2026-08-{index:02d}")
+            for index in range(1, 21)
+        ]
+
+    monkeypatch.setattr(main_mod, "_load_samples", fake_load)
+
+    first = paginate_library("interview", page=1, page_size=9)
+    assert first["total"] == 20
+    assert first["page"] == 1
+    assert first["pages"] == 3
+    assert first["page_size"] == 9
+    assert first["type"] == "interview"
+    assert [item["id"] for item in first["items"]] == [
+        f"iv-{index:02d}" for index in range(20, 11, -1)
+    ]
+    assert first["items"][0]["sort_date"] == "2026-08-20"
+
+    last = paginate_library("interview", page=3, page_size=9)
+    assert last["page"] == 3
+    assert [item["id"] for item in last["items"]] == ["iv-02", "iv-01"]
+    assert last["items"][-1]["sort_date"] == "2026-08-01"
+
+    empty = paginate_library("interview", page=4, page_size=9)
+    assert empty["items"] == []
+    assert empty["total"] == 20
+    assert empty["page"] == 4
+    assert empty["pages"] == 3
+
+
+def test_paginate_library_empty_collection(monkeypatch) -> None:
+    monkeypatch.setattr(main_mod, "_load_samples", lambda filename: [])
+    payload = paginate_library("interview", page=1, page_size=9)
+    assert payload["items"] == []
+    assert payload["total"] == 0
+    assert payload["page"] == 1
+    assert payload["pages"] == 0
+
+
+def test_api_jds_paginated_interview_contract(monkeypatch) -> None:
+    def fake_load(filename: str):
+        if filename == "jds.json":
+            return []
+        return [
+            _interview("old", published_at="2026-01-01"),
+            _interview("new", published_at="2026-08-29"),
+        ]
+
+    monkeypatch.setattr(main_mod, "_load_samples", fake_load)
+
+    with TestClient(main_mod.app) as client:
+        response = client.get(
+            "/api/jds",
+            params={"type": "interview", "page": 1, "page_size": 9},
+        )
+        bad = client.get("/api/jds", params={"type": "unknown"})
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["page"] == 1
+    assert data["pages"] == 1
+    assert data["total"] == 2
+    assert [item["id"] for item in data["items"]] == ["new", "old"]
+    assert bad.status_code == 400

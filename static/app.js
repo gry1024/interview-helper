@@ -34,10 +34,14 @@ const ROLE_LABELS = {
   training: "大模型训练与对齐",
   rag: "RAG 与 Agent 应用",
 };
-let libraryLoaded = false;
+const DEMO_CATALOG_URL = "/demo-projects.json?v=17";
+let demoCatalog = [];
+let demoCatalogPromise = null;
+const LIBRARY_PAGE_SIZE = 9;
 let libraryLoading = false;
-let libraryCache = null;
+let libraryRequestSeq = 0;
 let libraryKind = "jd";
+let libraryPage = 1;
 let turnInFlight = false;
 let endingInFlight = false;
 let monacoLoadPromise = null;
@@ -68,6 +72,90 @@ const REPORT_SECTIONS = [
     aliases: ["项目改良", "最小改造", "项目改造", "改造建议"],
   },
 ];
+
+function loadDemoCatalog() {
+  if (demoCatalog.length) {
+    return Promise.resolve(demoCatalog);
+  }
+  if (!demoCatalogPromise) {
+    demoCatalogPromise = fetch(DEMO_CATALOG_URL, { cache: "no-store" })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error("试用样本加载失败");
+        }
+        return response.json();
+      })
+      .then((data) => {
+        demoCatalog = Array.isArray(data?.projects) ? data.projects : [];
+        return demoCatalog;
+      })
+      .catch((error) => {
+        demoCatalogPromise = null;
+        throw error;
+      });
+  }
+  return demoCatalogPromise;
+}
+
+function getDemoById(demoId) {
+  return demoCatalog.find((item) => item.id === demoId) || null;
+}
+
+function markDemoSelected(demoId) {
+  document.querySelectorAll("[data-demo]").forEach((button) => {
+    const selected = button.dataset.demo === demoId;
+    button.classList.toggle("active", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  });
+}
+
+function applyDemoPreset(demoId, currentRole) {
+  const demo = getDemoById(demoId);
+  if (!demo) {
+    return null;
+  }
+  const githubInput = document.querySelector("#github-url");
+  const statementInput = document.querySelector("#statement");
+  const roleSelect = document.querySelector("#role");
+  const sampleRole = demo.role || "llm-algo";
+  const nextRole = sampleRole || String(currentRole || "").trim();
+  if (githubInput) {
+    githubInput.value = demo.github_url;
+  }
+  if (statementInput) {
+    statementInput.value = demo.statement;
+  }
+  if (roleSelect && (!roleSelect.value || sampleRole)) {
+    roleSelect.value = nextRole;
+  }
+  markDemoSelected(demoId);
+  return {
+    github_url: demo.github_url,
+    statement: demo.statement,
+    role: roleSelect?.value || nextRole,
+  };
+}
+
+async function handleDemoClick(demoId) {
+  try {
+    await loadDemoCatalog();
+    const filled = applyDemoPreset(demoId, document.querySelector("#role")?.value);
+    if (!filled) {
+      throw new Error("未找到该试用样本");
+    }
+  } catch (error) {
+    console.error("Failed to apply demo preset", error);
+    if (sessionStatus) {
+      sessionStatus.replaceChildren(
+        createTextElement(
+          "p",
+          "flash error",
+          error instanceof Error ? error.message : "试用样本加载失败",
+        ),
+      );
+    }
+  }
+}
 
 function createTextElement(tagName, className, text) {
   const element = document.createElement(tagName);
@@ -108,41 +196,6 @@ function fieldText(value) {
 
 function displayOrNone(value) {
   return fieldText(value).trim() || "暂无";
-}
-
-function isGraduateTargeted(sample) {
-  const education = fieldText(sample.education).trim();
-  const masterPhd = /硕士|博士|master'?s?\b|ph\.?\s*d\.?/i;
-  const bachelor = /本科|学士|bachelor/i;
-  if (education && masterPhd.test(education)) {
-    if (
-      bachelor.test(education) &&
-      !/硕士及以上|仅限硕士|仅限博士|博士/.test(education)
-    ) {
-      return false;
-    }
-    return true;
-  }
-  const blob = [
-    education,
-    fieldText(sample.requirements),
-    fieldText(sample.text),
-    fieldText(sample.experience),
-  ].join("\n");
-  return /硕士及以上|博士及以上|(?:学历|要求)[^\n。]{0,20}(?:硕士|博士)|(?:仅限|必须|须为)[^\n。]{0,8}(?:硕士|博士)|(?:硕士|博士)[^\n。]{0,8}(?:学历|及以上|起步)|master'?s(?:\s+degree)?\s+(?:or\s+above|and\s+above|required)|ph\.?\s*d\.?\s+(?:or\s+above|required)/i.test(
-    blob,
-  );
-}
-
-function kindOfSample(sample, fallback) {
-  const kind = String(sample.kind || "").trim().toLowerCase();
-  if (kind === "interview" || kind === "面经") {
-    return "interview";
-  }
-  if (kind === "jd" || kind === "job") {
-    return "jd";
-  }
-  return fallback;
 }
 
 const LIBRARY_KEYWORDS = [
@@ -197,44 +250,15 @@ function sourceLabel(sample) {
   return sample.source_name || "官方招聘";
 }
 
-function sortLibrarySamples(samples) {
-  return [...samples].sort((left, right) => {
-    const leftRank = isXiaohongshuSample(left) ? 0 : 1;
-    const rightRank = isXiaohongshuSample(right) ? 0 : 1;
-    if (leftRank !== rightRank) {
-      return leftRank - rightRank;
-    }
-    const leftKey = `${left.captured_at || left.published_at || ""}${left.id || ""}`;
-    const rightKey = `${right.captured_at || right.published_at || ""}${right.id || ""}`;
-    return leftKey.localeCompare(rightKey);
-  });
-}
-
-function partitionLibrary(data) {
-  const buckets = { jds: [], interviews: [] };
-  const rows = [
-    ...(data.jds || []).map((sample) => ({ sample, fallback: "jd" })),
-    ...(data.interviews || []).map((sample) => ({
-      sample,
-      fallback: "interview",
-    })),
-  ];
-  for (const { sample, fallback } of rows) {
-    if (!safeSourceUrl(sample.source_url) || !sample.source_name) {
-      continue;
-    }
-    if (isGraduateTargeted(sample)) {
-      continue;
-    }
-    if (kindOfSample(sample, fallback) === "interview") {
-      buckets.interviews.push(sample);
-    } else {
-      buckets.jds.push(sample);
-    }
-  }
-  buckets.jds = sortLibrarySamples(buckets.jds);
-  buckets.interviews = sortLibrarySamples(buckets.interviews);
-  return buckets;
+function sampleDisplayDate(sample) {
+  return String(
+    sample.published_at ||
+      sample.sort_date ||
+      sample.created_at ||
+      sample.date ||
+      sample.captured_at ||
+      "",
+  ).trim();
 }
 
 function appendHighlightedText(parent, text) {
@@ -342,7 +366,7 @@ function openSampleDetail(sample, kind) {
     body.append(paragraph);
   };
 
-  addField("发布日期", displayOrNone(sample.published_at || sample.captured_at));
+  addField("发布日期", displayOrNone(sampleDisplayDate(sample)));
   if (kind === "jd") {
     addField("岗位要求", displayOrNone(sample.requirements));
   } else {
@@ -390,27 +414,73 @@ function renderLibraryCard(sample, kind) {
     createSourceMark(sample),
     createTextElement("span", "library-card-company", sample.company || "未知公司"),
     createTextElement("span", "library-card-role", sample.role || "未命名岗位"),
-    excerpt,
   );
+  const dateText = sampleDisplayDate(sample);
+  if (dateText) {
+    button.append(createTextElement("span", "library-card-date", dateText));
+  }
+  button.append(excerpt);
   button.addEventListener("click", () => {
     openSampleDetail(sample, kind);
   });
   return button;
 }
 
+function renderLibraryPager(page, pages) {
+  const pager = document.createElement("nav");
+  pager.className = "library-pager";
+  pager.setAttribute(
+    "aria-label",
+    libraryKind === "interview" ? "面经分页" : "JD 分页",
+  );
+
+  const prev = document.createElement("button");
+  prev.type = "button";
+  prev.className = "btn btn-sm";
+  prev.textContent = "上一页";
+  prev.disabled = page <= 1;
+  prev.addEventListener("click", () => {
+    void loadSampleLibrary(page - 1);
+  });
+
+  const indicator = document.createElement("span");
+  indicator.className = "library-page-indicator";
+  indicator.setAttribute("aria-current", "page");
+  indicator.textContent = `${page}/${Math.max(pages, 1)}`;
+
+  const next = document.createElement("button");
+  next.type = "button";
+  next.className = "btn btn-sm";
+  next.textContent = "下一页";
+  next.disabled = pages === 0 || page >= pages;
+  next.addEventListener("click", () => {
+    void loadSampleLibrary(page + 1);
+  });
+
+  pager.append(prev, indicator, next);
+  return pager;
+}
+
 function renderLibraryGrid(data) {
   if (!sampleLibrary) {
     return;
   }
-  const samples = libraryKind === "interview" ? data.interviews : data.jds;
+  const samples = (data.items || []).filter(
+    (sample) => safeSourceUrl(sample.source_url) && sample.source_name,
+  );
+  const page = Number(data.page) || libraryPage;
+  const pages = Number(data.pages) || 0;
   if (!samples.length) {
-    sampleLibrary.replaceChildren(
-      createTextElement(
-        "p",
-        "empty-state",
-        libraryKind === "interview" ? "暂无可核验面经" : "暂无可核验 JD",
-      ),
+    const empty = createTextElement(
+      "p",
+      "empty-state",
+      libraryKind === "interview" ? "暂无可核验面经" : "暂无可核验 JD",
     );
+    if (pages > 0) {
+      sampleLibrary.replaceChildren(empty, renderLibraryPager(page, pages));
+    } else {
+      sampleLibrary.replaceChildren(empty);
+    }
     return;
   }
   const grid = document.createElement("div");
@@ -422,33 +492,40 @@ function renderLibraryGrid(data) {
   grid.append(
     ...samples.map((sample) => renderLibraryCard(sample, libraryKind)),
   );
-  sampleLibrary.replaceChildren(grid);
+  sampleLibrary.replaceChildren(grid, renderLibraryPager(page, pages));
 }
 
 function setLibraryKind(nextKind) {
-  libraryKind = nextKind === "interview" ? "interview" : "jd";
+  const next = nextKind === "interview" ? "interview" : "jd";
+  if (libraryKind !== next) {
+    libraryKind = next;
+    libraryPage = 1;
+  }
   document.querySelectorAll(".kind-btn").forEach((button) => {
     const isActive = button.dataset.kind === libraryKind;
     button.classList.toggle("active", isActive);
     button.setAttribute("aria-selected", String(isActive));
   });
-  if (libraryCache) {
-    renderLibraryGrid(libraryCache);
-    return;
-  }
-  libraryLoading = false;
-  void loadSampleLibrary();
+  void loadSampleLibrary(libraryPage);
 }
 
-async function loadSampleLibrary() {
-  if (!sampleLibrary || libraryLoaded || libraryLoading) {
+async function loadSampleLibrary(page = libraryPage) {
+  if (!sampleLibrary) {
     return;
   }
 
+  const requestedPage = Math.max(1, Number(page) || 1);
+  const seq = ++libraryRequestSeq;
   libraryLoading = true;
+  libraryPage = requestedPage;
   sampleLibrary.replaceChildren(createLoadingState("正在加载真实样本"));
   try {
-    const response = await fetch("/api/jds", {
+    const params = new URLSearchParams({
+      type: libraryKind,
+      page: String(requestedPage),
+      page_size: String(LIBRARY_PAGE_SIZE),
+    });
+    const response = await fetch(`/api/jds?${params}`, {
       headers: { Accept: "application/json" },
     });
     if (!response.ok) {
@@ -456,22 +533,27 @@ async function loadSampleLibrary() {
     }
 
     const data = await response.json();
-    if (!Array.isArray(data.jds) || !Array.isArray(data.interviews)) {
+    if (!Array.isArray(data.items)) {
       throw new Error("样本数据格式错误");
     }
+    if (seq !== libraryRequestSeq) {
+      return;
+    }
 
-    libraryCache = partitionLibrary(data);
-    libraryLoaded = true;
-    renderLibraryGrid(libraryCache);
+    libraryPage = Number(data.page) || requestedPage;
+    renderLibraryGrid(data);
   } catch (error) {
     console.error("Failed to load sourced samples", error);
-    libraryLoaded = false;
-    libraryCache = null;
+    if (seq !== libraryRequestSeq) {
+      return;
+    }
     sampleLibrary.replaceChildren(
       createTextElement("p", "flash error", "真实样本加载失败，请稍后重试。"),
     );
   } finally {
-    libraryLoading = false;
+    if (seq === libraryRequestSeq) {
+      libraryLoading = false;
+    }
   }
 }
 
@@ -2040,6 +2122,11 @@ function bootMockCodeExercise() {
 window.__interviewHelper = {
   openCodeExercise,
   extractCodeExercise,
+  applyDemoPreset,
+  loadDemoCatalog,
+  getDemoCatalog() {
+    return demoCatalog;
+  },
   getEditor() {
     return monacoEditor;
   },
@@ -2062,4 +2149,10 @@ window.__interviewHelper = {
   },
 };
 
+document.querySelectorAll("[data-demo]").forEach((button) => {
+  button.addEventListener("click", () => {
+    void handleDemoClick(button.dataset.demo);
+  });
+});
+void loadDemoCatalog();
 bootMockCodeExercise();

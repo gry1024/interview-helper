@@ -199,6 +199,42 @@ h1 {
   padding-top: 32px;
 }
 
+.demo-strip {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.demo-strip-label {
+  color: var(--fg-tertiary);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  margin-right: 4px;
+}
+
+.demo-btn {
+  background: var(--bg-elevated);
+  border: 1px solid var(--divider);
+  border-radius: var(--radius);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  min-height: 36px;
+  padding: 6px 12px;
+}
+
+.demo-btn:hover,
+.demo-btn:focus-visible {
+  background: var(--bg-hover);
+}
+
+.demo-btn.active {
+  background: #1d1d1f;
+  border-color: #1d1d1f;
+  color: #fff;
+}
+
 .field {
   display: grid;
   font-family: var(--font-sans);
@@ -942,6 +978,14 @@ textarea.input {
   line-height: 1.5;
 }
 
+.library-card-date {
+  color: var(--fg-tertiary);
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+}
+
 .library-card-excerpt {
   color: #3a3a3c;
   font-size: 13px;
@@ -993,6 +1037,28 @@ textarea.input {
   font-size: 22px;
   font-weight: 500;
   padding-bottom: 12px;
+}
+
+.library-pager {
+  align-items: center;
+  display: flex;
+  font-family: var(--font-sans);
+  gap: 16px;
+  justify-content: center;
+  margin-top: 28px;
+}
+
+.library-page-indicator {
+  color: var(--fg);
+  font-size: 0.933rem;
+  font-variant-numeric: tabular-nums;
+  min-width: 3.5em;
+  text-align: center;
+}
+
+.library-pager .btn {
+  min-height: 40px;
+  min-width: 88px;
 }
 
 .source-link {
@@ -1205,7 +1271,8 @@ body.modal-open {
   }
 
   .kind-btn,
-  .report-tab {
+  .report-tab,
+  .library-pager .btn {
     min-height: 44px;
   }
 
