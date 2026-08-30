@@ -9,6 +9,7 @@ Not collected by pytest. Run after deploy:
 from __future__ import annotations
 
 import json
+import os
 import re
 import sys
 import time
@@ -208,10 +209,45 @@ def end_session(page) -> str:
 
 
 def fetch_review(page, session_id: str) -> dict:
-    response = page.request.get(f"{PUBLIC_URL}/api/reviews/{session_id}")
-    if not response.ok:
-        raise AssertionError(f"复盘 {session_id} 读取失败：{response.status}")
-    return response.json()
+    last_error = "复盘读取失败"
+    for attempt in range(1, 8):
+        try:
+            response = page.request.get(f"{PUBLIC_URL}/api/reviews/{session_id}")
+        except Exception as exc:  # noqa: BLE001 - retry across deploys
+            last_error = f"复盘 {session_id} 第 {attempt} 次连接失败：{exc}"
+            log(last_error)
+            time.sleep(4)
+            continue
+        if response.ok:
+            return response.json()
+        last_error = f"复盘 {session_id} 读取失败：{response.status}"
+        log(last_error)
+        time.sleep(4)
+    raise AssertionError(last_error)
+
+
+def load_existing_session(page, session_id: str, name: str) -> dict:
+    snapshot = fetch_review(page, session_id)
+    report_text = snapshot.get("report", {}).get("text") or ""
+    band = extract_primary_band(report_text)
+    user_turns = [item for item in snapshot.get("turns", []) if item.get("role") == "user"]
+    thoughts = [item for item in snapshot.get("turns", []) if item.get("role") == "thought"]
+    log(f"复用已结束场次 {name} session_id={session_id} 轮次={len(user_turns)} 主档={band}")
+    return {
+        "name": name,
+        "session_id": session_id,
+        "user_turns": len(user_turns),
+        "band": band,
+        "report_text": report_text,
+        "visible_report": report_text,
+        "live_turns": [],
+        "thoughts": [item.get("body") or "" for item in thoughts],
+        "next_questions": [
+            item.get("body") or ""
+            for item in snapshot.get("turns", [])
+            if item.get("role") == "interviewer"
+        ],
+    }
 
 
 def run_persona(page, name: str, answers: list[str] | None) -> dict:
@@ -291,8 +327,18 @@ def main() -> int:
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(headless=True)
             page = browser.new_page()
+            for _wait in range(10):
+                try:
+                    if page.request.get(f"{PUBLIC_URL}/api/health").ok:
+                        break
+                except Exception:
+                    time.sleep(3)
             page.set_default_timeout(TURN_TIMEOUT_MS)
-            excellent = run_persona(page, "优秀", None)
+            resume_excellent = os.getenv("RESUME_EXCELLENT_ID", "").strip()
+            if resume_excellent:
+                excellent = load_existing_session(page, resume_excellent, "优秀")
+            else:
+                excellent = run_persona(page, "优秀", None)
             weak = run_persona(page, "一般较差", WEAK_ANSWERS)
             assert_weak_inspect(weak)
             if excellent["user_turns"] < MIN_ANSWERS or weak["user_turns"] < MIN_ANSWERS:
