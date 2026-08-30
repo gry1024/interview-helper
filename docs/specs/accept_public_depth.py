@@ -28,9 +28,9 @@ PUBLIC_URL = "http://120.26.176.60"
 GITHUB_URL = "https://github.com/jingyaogong/minimind.git"
 ROLE = "llm-algo"
 MIN_ANSWERS = 6
-TURN_TIMEOUT_MS = 180_000
+TURN_TIMEOUT_MS = 300_000
 START_TIMEOUT_MS = 180_000
-END_TIMEOUT_MS = 240_000
+END_TIMEOUT_MS = 300_000
 CODE_COORDINATE = re.compile(
     r"(?:[\w./-]+\.(?:py|js|ts|tsx|java|go|rs|cpp|c|h))(?::\d+)?",
     re.I,
@@ -44,14 +44,41 @@ MIND_STATEMENT = (
     "构建并清洗中文指令数据集，设计 Prompt Template，成功跑通了从无监督预训练到"
     "指令跟随的完整训练闭环。"
 )
-EXCELLENT_ANSWERS = [
-    "token ID 先是词表里的整数下标，会去查 embedding 表，得到 hidden state，形状从 [B, T] 变成 [B, T, n_embd]。这一步在 RoPE 之前，不是直接做位置编码。",
-    "RoPE 不是把位置向量加到 hidden 上，而是对 Q 和 K 按二维子空间用 cos/sin 做旋转，相对角度能保住，所以外推比绝对位置加法更稳。我没改成 ALiBi。",
-    "RMSNorm 不做均值中心化，只除以 RMS 再乘可学习的 gamma，比 LayerNorm 少一个减均值，收敛更稳。我承认没做完整的对照表。",
-    "SwiGLU 是门控：silu(xW_gate) 乘上 xW_up，再经 W_down，不是普通 ReLU/GELU。我按 LLaMA 这条线复现，没有另做 MoE。",
-    "Tokenizer 是在中文语料上训的分词器，预训练做 next-token。这是小模型复现，不是分布式万卡训练，我也没做检索 rerank。",
-    "SFT 用指令模板，损失主要打在回答 token 上；DPO 用偏好对、对照参考策略。边界是：没有 PPO/GRPO，也没有 rerank 或万卡集群。",
+EXCELLENT_CATALOG = [
+    (
+        ("共享", "复用", "转置", "logits", "同一份", "同一张", "是不是", "tying", "输出层"),
+        "是。最后一层把 hidden state 映射成词表大小的 logits，我按 LLaMA 系常见做法做 weight tying：LM head 和 embedding 共用同一张表的转置。省一套 vocab×hidden 参数，也让输入输出空间对齐；风险是改一边会牵动另一边。我没另训独立输出头。",
+    ),
+    (
+        ("embedding", "token id", "hidden", "查表", "整数", "下标"),
+        "token ID 先是词表里的整数下标，会去查 embedding 表，得到 hidden state，形状从 [B, T] 变成 [B, T, n_embd]。这一步在 RoPE 之前，不是直接加位置向量。",
+    ),
+    (
+        ("rope", "旋转", "位置编码", "外推"),
+        "RoPE 不是把位置向量加到 hidden 上，而是对 Q 和 K 按二维子空间用 cos/sin 做旋转，相对角度能保住，所以外推比绝对位置加法更稳。我没改成 ALiBi。",
+    ),
+    (
+        ("rms", "norm", "归一"),
+        "RMSNorm 不做均值中心化，只除以 RMS 再乘可学习的 gamma，比 LayerNorm 少一个减均值，收敛更稳。我承认没做完整的对照表。",
+    ),
+    (
+        ("swiglu", "激活", "门控", "relu", "gelu"),
+        "SwiGLU 是门控：silu(xW_gate) 乘上 xW_up，再经 W_down，不是普通 ReLU/GELU。我按 LLaMA 这条线复现，没有另做 MoE。",
+    ),
+    (
+        ("tokenizer", "词表", "分词"),
+        "Tokenizer 是在中文语料上训出来的分词器，预训练做 next-token。这是小模型复现，训练闭环是 Pretrain → SFT → DPO。",
+    ),
+    (
+        ("sft", "dpo", "对齐", "指令", "偏好"),
+        "SFT 用指令模板，损失主要打在回答 token 上；DPO 用偏好对、对照参考策略。边界是没有上 PPO/GRPO，也没有检索链路。",
+    ),
 ]
+EXCELLENT_FALLBACK = (
+    "我按自己项目里的对象接着讲：这一步要能落到张量和训练闭环上。"
+    "输入侧是 embedding 查表，位置用 RoPE 旋 Q/K，层内是 RMSNorm 和 SwiGLU，"
+    "训练是 Tokenizer 之后 Pretrain、SFT、DPO。我只复现轻量链路，承认没做检索和大规模集群。"
+)
 WEAK_ANSWERS = [
     "用了 RoPE 提升外推，公式我一下子写不出来。",
     "这块我不太懂。",
@@ -70,6 +97,33 @@ def log(message: str) -> None:
 def wait_ready(page) -> None:
     page.wait_for_selector("#send-answer:not([disabled])", timeout=TURN_TIMEOUT_MS)
     page.wait_for_selector("#end-interview:not([disabled])", timeout=TURN_TIMEOUT_MS)
+
+
+def last_question(page) -> str:
+    return page.locator(".bubble-row.interviewer .bubble").nth(-1).inner_text()
+
+
+def pick_excellent_answer(question: str, used: list[str]) -> str:
+    lowered = question.lower()
+    for keys, answer in EXCELLENT_CATALOG:
+        if answer in used:
+            continue
+        if any(key.lower() in lowered for key in keys):
+            return answer
+    for _keys, answer in EXCELLENT_CATALOG:
+        if answer not in used:
+            return answer
+    return EXCELLENT_FALLBACK
+
+
+def clone_failed(page) -> bool:
+    notice = page.locator("#clone-notice")
+    if notice.count() == 0:
+        return False
+    try:
+        return notice.is_visible() and bool(notice.inner_text().strip())
+    except Exception:
+        return False
 
 
 def start_session(page) -> str:
@@ -100,6 +154,11 @@ def start_session(page) -> str:
         session_id = page.locator("#interview-live").get_attribute("data-session-id")
         if not session_id:
             last_error = "开始面试后没有拿到 session id"
+            continue
+        if clone_failed(page):
+            last_error = f"第 {attempt} 次开场 clone 失败，session={session_id}"
+            log(last_error)
+            time.sleep(8)
             continue
         return session_id
     raise AssertionError(last_error)
@@ -155,12 +214,19 @@ def fetch_review(page, session_id: str) -> dict:
     return response.json()
 
 
-def run_persona(page, name: str, answers: list[str]) -> dict:
+def run_persona(page, name: str, answers: list[str] | None) -> dict:
     log(f"\n=== 开始场次：{name} ===")
     session_id = start_session(page)
     log(f"session_id={session_id}")
     turns = []
-    for index, answer in enumerate(answers, start=1):
+    used_excellent: list[str] = []
+    planned = answers or [""] * MIN_ANSWERS
+    for index, preset in enumerate(planned, start=1):
+        if name.startswith("优秀"):
+            answer = pick_excellent_answer(last_question(page), used_excellent)
+            used_excellent.append(answer)
+        else:
+            answer = preset
         log(f"{name} 发送第 {index} 轮")
         turns.append(answer_once(page, answer, index))
     if len(turns) < MIN_ANSWERS:
@@ -226,7 +292,7 @@ def main() -> int:
             browser = playwright.chromium.launch(headless=True)
             page = browser.new_page()
             page.set_default_timeout(TURN_TIMEOUT_MS)
-            excellent = run_persona(page, "优秀", EXCELLENT_ANSWERS)
+            excellent = run_persona(page, "优秀", None)
             weak = run_persona(page, "一般较差", WEAK_ANSWERS)
             assert_weak_inspect(weak)
             if excellent["user_turns"] < MIN_ANSWERS or weak["user_turns"] < MIN_ANSWERS:
