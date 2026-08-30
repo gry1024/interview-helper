@@ -34,7 +34,7 @@ const ROLE_LABELS = {
   agent: "Agent 应用实习",
   rag: "RAG / AI 搜索实习",
 };
-const DEMO_CATALOG_URL = "/demo-projects.json?v=27";
+const DEMO_CATALOG_URL = "/demo-projects.json?v=28";
 const KNOWN_TOOL_NAMES = new Set([
   "search_library",
   "code_inspect",
@@ -82,7 +82,7 @@ const REPORT_SECTIONS = [
 ];
 const TOOL_UI = {
   thinking: { label: "思考", start: "正在组织这一轮评价" },
-  search_library: { label: "检索面经", start: "正在调用检索面经工具" },
+  search_library: { label: "检索面经", start: "正在检索" },
   code_inspect: { label: "查仓库", start: "正在调用查仓库工具" },
   code_exercise: { label: "打开手撕", start: "正在打开手撕题" },
 };
@@ -972,44 +972,23 @@ function asExercisePayload(value) {
     value.starter || value.starter_code || "",
   );
   const exerciseId = fieldText(value.exercise_id || value.id || "").trim();
-  if (!starter) {
-    return null;
-  }
-  if (!title && !prompt && !exerciseId) {
+  if (!title || !prompt || !starter) {
     return null;
   }
   return {
     exercise_id: exerciseId,
-    title: title || "手撕代码",
-    prompt: prompt || "请在编辑器中完成这道题。",
+    title,
+    prompt,
     language: fieldText(value.language || "python").trim() || "python",
     starter,
   };
 }
 
 function extractCodeExercise(eventName, data) {
-  if (eventName === "code_exercise") {
-    return asExercisePayload(data);
-  }
-  const name = fieldText(data?.name).trim();
-  if (eventName !== "tool" || name !== "code_exercise") {
+  if (eventName !== "code_exercise") {
     return null;
   }
-  const fromResultString = () => {
-    if (typeof data.result !== "string" || !data.result.trim()) {
-      return null;
-    }
-    try {
-      return asExercisePayload(JSON.parse(data.result));
-    } catch {
-      return null;
-    }
-  };
-  return (
-    asExercisePayload(data.payload) ||
-    asExercisePayload(typeof data.result === "object" ? data.result : null) ||
-    fromResultString()
-  );
+  return asExercisePayload(data);
 }
 
 function configureMonacoEnvironment(cdn) {
@@ -1575,19 +1554,18 @@ function renderStartedSession(session) {
 
 function applySseEvent(eventName, data, thoughtNode, state) {
   const toolName = fieldText(data?.name).trim();
-  const isExerciseEvent =
-    eventName === "code_exercise" ||
-    (eventName === "tool" && toolName === "code_exercise");
-  if (isExerciseEvent) {
+  if (eventName === "code_exercise") {
     const exercise = extractCodeExercise(eventName, data);
-    if (exercise && exercise.starter) {
+    if (exercise && exercise.title && exercise.prompt && exercise.starter) {
       state.receivedExercise = true;
       void openCodeExercise(exercise);
     }
-    if (eventName === "tool") {
-      upsertToolStep(thoughtNode, "code_exercise", {
-        result: sanitizeThought(data.result || "已打开手撕题"),
-      });
+    return;
+  }
+  if (eventName === "tool" && toolName === "code_exercise") {
+    const result = sanitizeThought(data.result || "");
+    if (result.includes("已打开")) {
+      upsertToolStep(thoughtNode, "code_exercise", { result });
     }
     return;
   }
@@ -1776,6 +1754,9 @@ async function submitTurn(event) {
   thoughtNode.hidden = false;
   upsertToolStep(thoughtNode, "thinking", {
     status: "正在组织这一轮评价",
+  });
+  upsertToolStep(thoughtNode, "search_library", {
+    status: "正在检索",
   });
   const thinkingRow = thoughtNode.querySelector('[data-tool-name="thinking"]');
   if (thinkingRow) {
@@ -2074,7 +2055,11 @@ function fillThoughtFromTurn(thoughtNode, body, meta) {
         ? `检索到 ${item.hits.length} 条面经 · 点击查看`
         : "已检索面经";
     } else if (name === "code_exercise") {
-      result = String(item.result || "已打开手撕题");
+      const raw = String(item.result || "");
+      if (!raw.includes("已打开")) {
+        continue;
+      }
+      result = raw;
     } else if (name === "code_inspect") {
       result = "已核对仓库";
     }
